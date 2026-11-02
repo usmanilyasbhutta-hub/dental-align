@@ -99,6 +99,15 @@ class MotionTracker {
    * for a portrait-held phone (iOS sign convention). Returns null when the phone points
    * mostly up/down (occlusal views), where roll relative to gravity is ill-defined.
    */
+  /** Unit gravity direction in the device frame (sign convention is irrelevant for relative use). */
+  gravity(): { x: number; y: number; z: number } | null {
+    const g = this.grav;
+    if (!g) return null;
+    const n = Math.hypot(g.x, g.y, g.z);
+    if (n < 1) return null;
+    return { x: g.x / n, y: g.y / n, z: g.z / n };
+  }
+
   phoneRoll(): number | null {
     const g = this.grav;
     if (!g) return null;

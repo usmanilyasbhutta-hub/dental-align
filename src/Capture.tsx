@@ -5,6 +5,7 @@ import { motion } from './motion';
 import { db, uid, type Capture as CaptureRec } from './db';
 import { viewDef } from './views';
 import type { Settings } from './settings';
+import { coach, gravityCue, imageCue, type AngleCue, type Coach, type Vec3 } from './guidance';
 
 interface Props {
   patientId: string;
@@ -29,6 +30,9 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
   const [flash, setFlash] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [ghost, setGhost] = useState(settings.ghostOpacity);
+  const [coachMsg, setCoachMsg] = useState<Coach | null>(null);
+  const [angleInfo, setAngleInfo] = useState<AngleCue | null>(null);
+  const baseGravityRef = useRef<Vec3 | null>(null);
   const logRef = useRef<{ rows: Record<string, unknown>[]; events: Record<string, unknown>[]; startedAt: number }>({ rows: [], events: [], startedAt: Date.now() });
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -53,10 +57,14 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
 
   useEffect(() => {
     if (!baseline) {
+      baseGravityRef.current = null;
       setBaseUrl(null);
       engineRef.current?.requestReference(null);
       return;
     }
+    const att = (baseline.meta as { attitude?: { gravity?: Vec3 | null } } | undefined)?.attitude;
+    baseGravityRef.current = att?.gravity ?? null;
+    if (engineRef.current) engineRef.current.baseGravity = baseGravityRef.current;
     const u = URL.createObjectURL(baseline.master);
     setBaseUrl(u);
     engineRef.current?.requestReference(baseline.master);
@@ -94,9 +102,27 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
 
     const renderer = new OverlayRenderer();
     let raf = 0;
+    let lastCoach = 0;
     const loop = () => {
-      if (stateRef.current && canvasRef.current) {
-        renderer.draw({ canvas: canvasRef.current, state: stateRef.current, settings: settingsRef.current, viewKey, phoneRoll: motion.phoneRoll() });
+      const S = stateRef.current, cfg = settingsRef.current;
+      if (S && canvasRef.current) {
+        eng.baseGravity = baseGravityRef.current;
+        let angle: AngleCue | null = null;
+        if (S.hasRef) {
+          const gc = cfg.angleSource !== 'image' ? gravityCue(motion.gravity(), baseGravityRef.current) : null;
+          angle = gc ?? (cfg.angleSource !== 'gravity' ? imageCue(S.smooth, cfg.flipYaw, cfg.flipPitch) : null);
+        }
+        renderer.draw({ canvas: canvasRef.current, state: S, settings: cfg, viewKey, phoneRoll: motion.phoneRoll(), angle });
+        const now = performance.now();
+        if (now - lastCoach > 200) {
+          lastCoach = now;
+          setAngleInfo(angle);
+          setCoachMsg(
+            cfg.coach
+              ? coach({ hasRef: S.hasRef, reg: S.smooth, angle, angleTolDeg: cfg.angleTolDeg, motionRate: S.motionRate, motionMax: cfg.motionMax, sharpOk: S.sharpOk })
+              : null,
+          );
+        }
       }
       raf = requestAnimationFrame(loop);
     };
@@ -219,8 +245,9 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
       {st?.aspectMismatch && <div className="notice">Hold the phone in the same orientation as the baseline</div>}
       {st?.lightingHint && !settings.developer && <div className="lighthint">{st.lightingHint === 'darker' ? '☀︎ lighting dimmer than reference' : '☀︎ lighting brighter than reference'}</div>}
       {toast && <div className="toast">{toast}</div>}
+      {coachMsg && !toast && <div className={`coach ${coachMsg.kind}`}>{coachMsg.text}</div>}
 
-      {settings.developer && st && <DevHud st={st} log={logRef.current} />}
+      {settings.developer && st && <DevHud st={st} log={logRef.current} angle={angleInfo} />}
 
       <div className="bottombar">
         <button className="thumb" onClick={onHistory} aria-label="History">
@@ -244,7 +271,7 @@ function f(v: number | null | undefined, d = 3) {
   return v == null || Number.isNaN(v) ? '—' : v.toFixed(d);
 }
 
-function DevHud({ st, log }: { st: EngineState; log: { rows: Record<string, unknown>[] } }) {
+function DevHud({ st, log, angle }: { st: EngineState; log: { rows: Record<string, unknown>[] }; angle: AngleCue | null }) {
   const r = st.last;
   const g = st.smooth;
   const raw = st.raw;
@@ -280,6 +307,9 @@ function DevHud({ st, log }: { st: EngineState; log: { rows: Record<string, unkn
       </div>
       <div>
         followed(avg30) {fol.length ? f(fol.reduce((a, b) => a + b, 0) / fol.length, 2) : '—'} · improved {imp.length ? Math.round((100 * imp.filter(Boolean).length) / imp.length) + '%' : '—'}
+      </div>
+      <div>
+        angle {angle ? `${angle.source} ${angle.deg.toFixed(1)}° aim(${((angle.x * 180) / Math.PI).toFixed(1)}, ${((angle.y * 180) / Math.PI).toFixed(1)})` : 'n/a (no baseline attitude & no registration)'}
       </div>
       <div>J {J ? `[${J.map((x) => (x * 1000).toFixed(2)).join(', ')}]e-3 w/°` : 'learning…'} · rows {log.rows.length}</div>
     </div>

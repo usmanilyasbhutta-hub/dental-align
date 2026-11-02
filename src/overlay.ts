@@ -12,6 +12,7 @@
 import type { EngineState } from './engine';
 import type { Settings } from './settings';
 import { drawGenericGuide } from './views';
+import type { AngleCue } from './guidance';
 
 export interface OverlayCtx {
   canvas: HTMLCanvasElement;
@@ -19,6 +20,7 @@ export interface OverlayCtx {
   settings: Settings;
   viewKey: string;
   phoneRoll: number | null;
+  angle: AngleCue | null;
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -142,7 +144,7 @@ export class OverlayRenderer {
     if (g && this.puckAlpha > 0.02) {
       const s = g.scale, th = g.roll;
       const A = s * Math.cos(th), B = s * Math.sin(th);
-      const GAIN = 4; // visual exaggeration of perspective so tilt is perceivable
+      const GAIN = 0; // angulation now has its own crosshair cue; the ring shows position, distance, roll
       const gx = GAIN * g.px * (settings.flipYaw ? -1 : 1);
       const gy = GAIN * g.py * (settings.flipPitch ? -1 : 1);
       const proj = (u: number, v: number): [number, number] => {
@@ -204,6 +206,52 @@ export class OverlayRenderer {
       }
     }
 
-    // aspect mismatch notice is handled by UI; lighting hint is subtle and secondary
+    this.drawAngle(ctx, o, W, H);
+  }
+
+  /** Angulation crosshair: fixed "+" at the centre, moving "+" shows where to aim. */
+  private drawAngle(ctx: CanvasRenderingContext2D, o: OverlayCtx, W: number, H: number) {
+    const a = o.angle;
+    if (!a) return;
+    const tol = o.settings.angleTolDeg;
+    const cx = W / 2, cy = H / 2;
+    const K = 8 * (180 / Math.PI); // 8 px per degree
+    const maxR = Math.min(W, H) * 0.42;
+    let dx = a.x * K, dy = a.y * K;
+    const r = Math.hypot(dx, dy);
+    if (r > maxR) { dx *= maxR / r; dy *= maxR / r; }
+    const ok = a.deg <= tol;
+    const col = ok ? '110,235,160' : a.deg <= tol * 3 ? '255,190,70' : '255,255,255';
+    const alpha = ok ? 0.55 : 0.95;
+    const arm = 11;
+    ctx.save();
+    ctx.lineCap = 'round';
+    // fixed target
+    ctx.strokeStyle = `rgba(255,255,255,${ok ? 0.35 : 0.7})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - arm, cy); ctx.lineTo(cx - 4, cy); ctx.moveTo(cx + 4, cy); ctx.lineTo(cx + arm, cy);
+    ctx.moveTo(cx, cy - arm); ctx.lineTo(cx, cy - 4); ctx.moveTo(cx, cy + 4); ctx.lineTo(cx, cy + arm);
+    ctx.stroke();
+    // link + moving cross
+    if (!ok) {
+      ctx.setLineDash([3, 5]);
+      ctx.strokeStyle = `rgba(${col},0.5)`;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + dx, cy + dy); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.strokeStyle = `rgba(${col},${alpha})`;
+    ctx.lineWidth = 3;
+    const mx = cx + dx, my = cy + dy;
+    ctx.beginPath();
+    ctx.moveTo(mx - arm, my); ctx.lineTo(mx + arm, my); ctx.moveTo(mx, my - arm); ctx.lineTo(mx, my + arm);
+    ctx.stroke();
+    if (r > maxR) {
+      // off-scale: arrowhead on the cross pointing outward
+      const ang = Math.atan2(dy, dx);
+      ctx.translate(mx, my); ctx.rotate(ang);
+      ctx.beginPath(); ctx.moveTo(arm + 2, -7); ctx.lineTo(arm + 12, 0); ctx.lineTo(arm + 2, 7); ctx.stroke();
+    }
+    ctx.restore();
   }
 }

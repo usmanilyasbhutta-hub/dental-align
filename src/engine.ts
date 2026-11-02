@@ -542,6 +542,17 @@ export class CaptureEngine {
     this.prevRaw = raw;
     st.controllerJ = this.jSamples > 10 ? [...this.J] : null;
 
+    // ---- gravity angulation error vs. baseline (if the baseline stored its attitude)
+    let angleGravityDeg: number | null = null;
+    {
+      const n = motion.gravity(), b = this.baseGravity;
+      if (n && b) {
+        const ax = b.y * n.z - b.z * n.y, ay = b.z * n.x - b.x * n.z;
+        angleGravityDeg = (Math.asin(Math.min(1, Math.hypot(ax, ay))) * 180) / Math.PI;
+      }
+    }
+    const angleBlocks = s.angleSource !== 'image' && angleGravityDeg != null && angleGravityDeg > s.angleTolDeg * 2;
+
     // ---- phase
     const prevPhase = st.phase;
     let phase: Phase;
@@ -551,11 +562,12 @@ export class CaptureEngine {
     else if (st.smooth.E < s.strongE) phase = st.sharpOk && m.rate < s.motionMax ? 'peak' : 'strong';
     else if (st.smooth.E < s.convergingE) phase = 'converging';
     else phase = 'converging';
+    if (r.hasRef && angleBlocks && (phase === 'strong' || phase === 'peak')) phase = 'converging';
     st.phase = phase;
 
     // haptics with hysteresis (spec §18D)
     if (r.hasRef && st.smooth) {
-      if (!this.strongLatched && st.smooth.E < s.strongE) {
+      if (!this.strongLatched && st.smooth.E < s.strongE && !angleBlocks) {
         this.strongLatched = true;
         if (s.haptics) haptic('tick');
         this.onEvent({ type: 'strong-convergence', E: st.smooth.E });
@@ -616,6 +628,8 @@ export class CaptureEngine {
       dAlpha: m.dAlpha,
       dBeta: m.dBeta,
       dGamma: m.dGamma,
+      angleGravityDeg,
+      angleImageDeg: raw ? (Math.hypot(raw.px, raw.py) * 1.45 * 180) / Math.PI : null,
       guideX: g ? -g.tx : null, // desired content motion (screen direction)
       guideY: g ? -g.ty : null,
       guideScale: g ? 1 / g.scale : null,
@@ -651,6 +665,8 @@ export class CaptureEngine {
   }
 
   autoCaptureCb: (() => void) | null = null;
+  /** baseline gravity (device frame) if the baseline stored it; used for logging the angle error */
+  baseGravity: { x: number; y: number; z: number } | null = null;
 
   private rlsUpdate(x: number[], y: number[]) {
     // independent RLS for each output row sharing P (2x2), forgetting factor
@@ -766,6 +782,8 @@ export class CaptureEngine {
         sharpness: r?.sharpness ?? null,
         brightness: r?.brightness ?? null,
         motion: { rate: chosen?.motion ?? null, last: this.motionAcc },
+        // phone attitude at capture: lets follow-ups reproduce angulation from the gravity sensor
+        attitude: { gravity: motion.gravity(), orientation: this.motionAcc?.orientation ?? null },
         settings: this.settings,
         integrity: 'Untouched acquisition: selected camera frame encoded 1:1, no warp, crop, or enhancement.',
       };

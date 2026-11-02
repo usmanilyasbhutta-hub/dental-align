@@ -27,6 +27,9 @@ export interface Settings {
   haptics: boolean;
   developer: boolean;
   ghostOpacity: number;
+  coach: boolean; // one short text instruction for the dominant error
+  angleSource: 'auto' | 'gravity' | 'image';
+  angleTolDeg: number;
 }
 
 export const DEFAULTS: Settings = {
@@ -57,6 +60,9 @@ export const DEFAULTS: Settings = {
   haptics: true,
   developer: false,
   ghostOpacity: 0.35,
+  coach: true,
+  angleSource: 'auto',
+  angleTolDeg: 1.0,
 };
 
 const KEY = 'dental-align-settings-v1';

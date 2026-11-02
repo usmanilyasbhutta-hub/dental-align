@@ -36,6 +36,16 @@ Later deployments: rebuild, re-drag `dist`. The service worker picks up the new 
 - **Follow-ups:** the baseline appears as a **fixed translucent ghost** (◐ cycles its opacity). Move the phone and patient until the live anatomy settles onto it.
 - Thumbnail (bottom-left) → history: unwarped baseline/follow-up comparison slider, **Save / Share** (iOS share sheet → *Save Image* puts it in Photos), metadata export, **Make baseline**, delete.
 
+### Angle guide and coaching (v0.2, added after the first real test)
+
+- **Crosshair = angulation.** A small fixed **+** sits at the centre; a bold **+** shows where to **aim** the camera. Tilt the phone until the bold + sits on the fixed one (white → amber → green). It updates at sensor speed, independently of image matching.
+  - **Tilt-sensor source:** every capture now stores the phone's gravity direction. Follow-ups compare against it, which is instant and noise-free. **Baselines taken before v0.2 don't have this; retake the baseline once** (or the guide falls back to the image source).
+  - **Image source:** estimated from the measured perspective of the subject itself. Slower and noisier, but it measures camera vs. subject. Settings → *Angle guide source* switches between auto, tilt sensor and image.
+  - The tilt sensor assumes the subject keeps its own orientation, which holds for a stamp on a table and only roughly for a patient's head. If a patient tilts their head, trust the image (ghost, feature lines) over the crosshair.
+- **Coach line:** one instruction for the biggest error, in order: angle (if > 2.5°) → distance → position → roll → fine angle → "Hold still" → **"Hold — capture"**. Turn it off in Settings.
+- The shutter ring only turns green (and the haptic fires) when the angle also matches within tolerance (default 1°).
+- The ring no longer tilts. It now shows only position, distance and roll; angle has its own cue.
+
 ### Reading the guidance
 
 | Cue | Meaning |
@@ -45,7 +55,7 @@ Later deployments: rebuild, re-drag `dist`. The service worker picks up the new 
 | Live ring off-centre | Translation: move the phone toward the ring (it slides back to centre). |
 | Live ring larger / smaller | Too close / too far. |
 | Tick on the live ring rotated | Roll: rotate the phone the same way the tick leans. |
-| Live ring tilted (one side smaller) | Pitch/yaw: that side of the subject is farther away than in the reference (exaggerated ×4 so it's visible). |
+| Bold **+** away from the centre **+** | Angulation: aim the camera toward the bold +. |
 | Feature lines | Each line joins a live match to its *fixed* reference location. Colour goes continuously white → amber → green as they converge. Points on changed anatomy **fade out** (never red). |
 | Shutter ring green + haptic tick | Strong convergence. A second, double tick = *peak opportunity* (geometry strong + sharp + phone steady). |
 

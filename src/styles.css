@@ -97,5 +97,9 @@ button.danger { background: #5a1f1f; border-color: #8a2b2b; }
 .notice { position: absolute; top: calc(env(safe-area-inset-top) + 64px); left: 50%; transform: translateX(-50%); background: rgba(0, 0, 0, 0.6); padding: 8px 14px; border-radius: 10px; font-size: 13px; max-width: 86%; text-align: center; }
 .notice.err { background: rgba(120, 20, 20, 0.85); }
 .toast { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 120px); left: 50%; transform: translateX(-50%); background: rgba(0, 0, 0, 0.65); padding: 8px 16px; border-radius: 16px; font-size: 14px; }
-.lighthint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 112px); left: 50%; transform: translateX(-50%); font-size: 12px; color: rgba(255, 220, 140, 0.85); text-shadow: 0 1px 2px #000; }
+.lighthint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 160px); left: 50%; transform: translateX(-50%); font-size: 12px; color: rgba(255, 220, 140, 0.85); text-shadow: 0 1px 2px #000; }
 .devhud { position: absolute; top: calc(env(safe-area-inset-top) + 56px); left: 6px; right: 6px; font: 10.5px/1.35 ui-monospace, Menlo, monospace; background: rgba(0, 0, 0, 0.55); padding: 6px 8px; border-radius: 8px; pointer-events: none; white-space: nowrap; overflow: hidden; }
+.coach { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 118px); left: 50%; transform: translateX(-50%); background: rgba(0, 0, 0, 0.55); padding: 7px 16px; border-radius: 18px; font-size: 16px; font-weight: 600; letter-spacing: 0.01em; white-space: nowrap; pointer-events: none; }
+.coach.angle { color: #ffd27a; }
+.coach.ok { color: var(--accent); }
+.coach.search { font-weight: 500; font-size: 14px; color: rgba(255, 255, 255, 0.8); }

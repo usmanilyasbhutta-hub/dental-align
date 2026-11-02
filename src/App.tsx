@@ -378,6 +378,16 @@ function SettingsScreen({ settings, onChange, onBack }: { settings: Settings; on
           <option value="4k">4K (if available)</option>
         </select>
       </label>
+      {bool('coach', 'Coaching text (one instruction at a time)')}
+      <label className="row">
+        <span>Angle guide source</span>
+        <select value={settings.angleSource} onChange={(e) => onChange({ ...settings, angleSource: e.target.value as Settings['angleSource'] })}>
+          <option value="auto">Auto (tilt sensor if baseline has it)</option>
+          <option value="gravity">Tilt sensor only</option>
+          <option value="image">Image only</option>
+        </select>
+      </label>
+      {num('angleTolDeg', 'Angle tolerance (°)', 0.25)}
       {bool('developer', 'Diagnostics overlay (also: long-press view name)')}
 
       <div className="sectionlabel">Registration (developer)</div>
