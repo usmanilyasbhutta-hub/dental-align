@@ -77,5 +77,5 @@ export function coach(opts: {
   if (Math.abs(reg.roll) > rTol) return { text: reg.roll > 0 ? 'Rotate ↻' : 'Rotate ↺', kind: 'rotate' };
   if (angle && angle.deg > angleTolDeg) return { text: `${angDir(angle)} slightly`, kind: 'angle' };
   if (motionRate > motionMax || !sharpOk) return { text: 'Hold still', kind: 'steady' };
-  return { text: 'Hold — capture', kind: 'ok' };
+  return { text: 'Aligned. Take the photo', kind: 'ok' };
 }

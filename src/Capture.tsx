@@ -5,6 +5,7 @@ import { motion } from './motion';
 import { db, uid, type Capture as CaptureRec } from './db';
 import { viewDef } from './views';
 import type { Settings } from './settings';
+import { IconClose, IconGhost } from './icons';
 import { coach, gravityCue, imageCue, type AngleCue, type Coach, type Vec3 } from './guidance';
 
 interface Props {
@@ -182,8 +183,8 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
       if (isBaseline) {
         // The first satisfactory photograph automatically becomes the baseline (spec §6).
         setBaseline(rec);
-        showToast('Baseline set');
-      } else showToast('Saved');
+        showToast('Baseline saved');
+      } else showToast('Follow-up saved');
     } catch (e) {
       showToast('Capture failed: ' + (e as Error).message);
     } finally {
@@ -214,10 +215,12 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
     const n = steps[(i + 1) % steps.length];
     setGhost(n);
     onSettings({ ...settings, ghostOpacity: n });
+    showToast(n === 0 ? 'Ghost off' : `Ghost ${Math.round(n * 100)}%`);
   };
 
   const phase = st?.phase ?? 'searching';
-  const shutterClass = `shutter ${st?.capturing ? 'busy' : ''} ${phase === 'peak' ? 'peak' : phase === 'strong' ? 'strong' : ''}`;
+  const aligned = !!baseline && (phase === 'peak' || phase === 'strong');
+  const shutterClass = `shutter ${st?.capturing ? 'busy' : ''} ${baseline && phase === 'peak' ? 'peak' : aligned ? 'strong' : ''}`;
 
   return (
     <div className="capture">
@@ -226,37 +229,37 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
       <canvas ref={canvasRef} className="overlay" />
       {flash && <div className="flash" />}
 
-      <div className="topbar">
-        <button className="icon" onClick={onClose} aria-label="Close">
-          ✕
+      <div className="cam-top">
+        <button className="cam-btn" onClick={onClose} aria-label="Close camera">
+          <IconClose />
         </button>
-        <div className="viewlabel" onPointerDown={startPress} onPointerUp={endPress} onPointerLeave={endPress}>
-          <span className="pid">{patientId}</span>
-          <span className="vname">{def.label}</span>
-          {!baseline && <span className="badge">BASELINE</span>}
+        <div className="cam-title" onPointerDown={startPress} onPointerUp={endPress} onPointerLeave={endPress}>
+          <span className="cam-view">{def.label}</span>
+          <span className="cam-pid">{baseline ? patientId : `${patientId}, first photo`}</span>
         </div>
-        <button className="icon ghostbtn" onClick={cycleGhost} aria-label="Ghost opacity" disabled={!baseUrl}>
-          ◐
+        <button className={`cam-btn ${ghost > 0 && baseUrl ? 'on' : ''}`} onClick={cycleGhost} aria-label="Ghost opacity" disabled={!baseUrl}>
+          <IconGhost />
         </button>
       </div>
 
-      {st?.error && <div className="notice err">{st.error}</div>}
-      {!st?.error && st && !st.workerReady && <div className="notice">Loading vision engine…</div>}
-      {st?.aspectMismatch && <div className="notice">Hold the phone in the same orientation as the baseline</div>}
-      {st?.lightingHint && !settings.developer && <div className="lighthint">{st.lightingHint === 'darker' ? '☀︎ lighting dimmer than reference' : '☀︎ lighting brighter than reference'}</div>}
-      {toast && <div className="toast">{toast}</div>}
+      {st?.error && <div className="cam-notice err">{st.error}</div>}
+      {!st?.error && st && !st.workerReady && <div className="cam-notice">Preparing alignment…</div>}
+      {st?.aspectMismatch && <div className="cam-notice">Hold the phone the same way as in the baseline</div>}
+      {st?.lightingHint && !settings.developer && <div className="lighthint">{st.lightingHint === 'darker' ? 'Lighting is dimmer than the baseline' : 'Lighting is brighter than the baseline'}</div>}
+      {toast && <div className="cam-toast">{toast}</div>}
       {coachMsg && !toast && <div className={`coach ${coachMsg.kind}`}>{coachMsg.text}</div>}
 
       {settings.developer && st && <DevHud st={st} log={logRef.current} angle={angleInfo} />}
 
-      <div className="bottombar">
-        <button className="thumb" onClick={onHistory} aria-label="History">
+      <div className="cam-bottom">
+        <button className="cam-thumb" onClick={onHistory} aria-label="Photo history">
           {lastThumb ? <img src={lastThumb} alt="" /> : <span />}
         </button>
-        <button className={shutterClass} onClick={() => void doCapture()} aria-label="Capture">
-          <span />
+        <button className={shutterClass} onClick={() => void doCapture()} aria-label="Take photo">
+          <span className="shutter-halo" />
+          <span className="shutter-core" />
         </button>
-        <div className="spacer" />
+        <div className="cam-mode">{baseline ? 'Follow-up' : 'Baseline'}</div>
       </div>
     </div>
   );

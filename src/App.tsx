@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Capture from './Capture';
-import { db, type Capture as CaptureRec, type LogRecord, type Patient, type ViewRecord } from './db';
+import { db, type Capture as CaptureRec, type LogRecord, type ViewRecord } from './db';
 import { VIEWS, viewDef } from './views';
 import { DEFAULTS, loadSettings, saveSettings, type Settings } from './settings';
 import { motion } from './motion';
 import { shareOrDownload, stamp, toCSV } from './share';
+import {
+  IconCamera, IconCheck, IconChevronLeft, IconChevronRight, IconClose, IconEllipsis, IconGear, IconInfo,
+  IconPin, IconPlus, IconSearch, IconShare, IconTrash,
+} from './icons';
 
 type Route =
   | { name: 'home' }
@@ -12,6 +16,8 @@ type Route =
   | { name: 'capture'; id: string; view: string }
   | { name: 'history'; id: string; view: string }
   | { name: 'settings' };
+
+const BASE = import.meta.env.BASE_URL;
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
@@ -59,156 +65,290 @@ export default function App() {
   }
 }
 
+// ---------------------------------------------------------------- shared chrome
+function NavBar({ back, onBack, title, right }: { back?: string; onBack?: () => void; title?: string; right?: ReactNode }) {
+  return (
+    <nav className="navbar">
+      <div className="nav-left">
+        {onBack && (
+          <button className="nav-back" onClick={onBack}>
+            <IconChevronLeft />
+            <span>{back}</span>
+          </button>
+        )}
+      </div>
+      <div className="nav-title">{title}</div>
+      <div className="nav-right">{right}</div>
+    </nav>
+  );
+}
+
+function relDay(t: number) {
+  const d = new Date(t), now = new Date();
+  const day = 86400000;
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (t >= start) return 'Today';
+  if (t >= start - day) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' });
+}
+
+function initials(id: string) {
+  const letters = id.replace(/[^A-Za-z]/g, '');
+  return (letters.slice(0, 2) || id.slice(0, 2)).toUpperCase();
+}
+
 // ---------------------------------------------------------------- Home
+interface PatientRow { id: string; updatedAt: number; views: number }
+
 function Home({ onOpen, onSettings }: { onOpen: (id: string) => void; onSettings: () => void }) {
-  const [id, setId] = useState('');
-  const [patients, setPatients] = useState<Patient[]>([]);
+  const [q, setQ] = useState('');
+  const [rows, setRows] = useState<PatientRow[] | null>(null);
+  const [hintHidden, setHintHidden] = useState(() => {
+    try { return localStorage.getItem('da-hint-hidden') === '1'; } catch { return false; }
+  });
   useEffect(() => {
-    void db.listPatients().then(setPatients);
+    (async () => {
+      const ps = await db.listPatients();
+      const out: PatientRow[] = [];
+      for (const p of ps) out.push({ id: p.id, updatedAt: p.updatedAt, views: (await db.listViews(p.id)).length });
+      setRows(out);
+    })();
   }, []);
   const standalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone;
+  const clean = q.trim().toUpperCase();
+  const filtered = useMemo(() => (rows ?? []).filter((r) => !clean || r.id.includes(clean)), [rows, clean]);
+  const exact = rows?.some((r) => r.id === clean);
   const open = async (pid: string) => {
-    const clean = pid.trim().toUpperCase();
-    if (!clean) return;
-    await db.touchPatient(clean);
-    onOpen(clean);
+    const id = pid.trim().toUpperCase();
+    if (!id) return;
+    await db.touchPatient(id);
+    onOpen(id);
   };
+
   return (
-    <div className="page">
-      <header className="hdr">
-        <h1>Dental Align</h1>
-        <button className="link" onClick={onSettings}>
-          Settings
-        </button>
+    <div className="screen">
+      <NavBar right={<button className="nav-icon" onClick={onSettings} aria-label="Settings"><IconGear /></button>} />
+      <header className="brandhead">
+        <img src={`${BASE}brand/logo.png`} alt="Dental House" className="brandlogo" />
       </header>
+      <h1 className="largetitle">Patients</h1>
       <form
-        className="pidform"
+        className="searchfield"
         onSubmit={(e) => {
           e.preventDefault();
-          void open(id);
+          void open(q);
         }}
       >
-        <input value={id} onChange={(e) => setId(e.target.value)} placeholder="Patient ID, e.g. DH-0147" autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
-        <button type="submit" disabled={!id.trim()}>
-          Open
-        </button>
+        <IconSearch />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Find or add a patient ID"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          spellCheck={false}
+          enterKeyHint="go"
+          aria-label="Patient ID"
+        />
+        {q && (
+          <button type="button" className="clearbtn" onClick={() => setQ('')} aria-label="Clear">
+            <IconClose />
+          </button>
+        )}
       </form>
-      {patients.length > 0 && <div className="sectionlabel">Recent</div>}
-      <ul className="plist">
-        {patients.map((p) => (
-          <li key={p.id} onClick={() => void open(p.id)}>
-            <span>{p.id}</span>
-            <small>{new Date(p.updatedAt).toLocaleDateString()}</small>
-          </li>
-        ))}
-      </ul>
-      {!standalone && <p className="hint">For best results on iPhone: Share → Add to Home Screen, then open Dental Align from the home screen.</p>}
-      <p className="hint small">Experimental prototype · Goal 1 · images stay on this device</p>
+
+      {clean && !exact && (
+        <div className="group">
+          <button className="cell cell-action" onClick={() => void open(clean)}>
+            <span className="cell-icon accent"><IconPlus /></span>
+            <span className="cell-main">
+              <span className="cell-title">Add patient {clean}</span>
+            </span>
+          </button>
+        </div>
+      )}
+
+      {rows && rows.length === 0 && !clean && (
+        <div className="empty">
+          <img src={`${BASE}brand/mark.png`} alt="" />
+          <p>Type a patient ID above to start their first photo series.</p>
+        </div>
+      )}
+
+      {filtered.length > 0 && (
+        <>
+          <div className="group-header">{clean ? 'Matches' : 'Recent'}</div>
+          <div className="group">
+            {filtered.map((p) => (
+              <button key={p.id} className="cell" onClick={() => void open(p.id)}>
+                <span className="avatar">{initials(p.id)}</span>
+                <span className="cell-main">
+                  <span className="cell-title">{p.id}</span>
+                  <span className="cell-sub">
+                    {p.views === 0 ? 'No views yet' : p.views === 1 ? '1 view' : `${p.views} views`}, {relDay(p.updatedAt).toLowerCase()}
+                  </span>
+                </span>
+                <IconChevronRight className="chev" />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {!standalone && !hintHidden && (
+        <div className="tipcard">
+          <div>
+            <strong>Add to Home Screen</strong>
+            <p>In Safari, tap Share, then Add to Home Screen. Dental Align then opens full screen like an app.</p>
+          </div>
+          <button
+            className="tipclose"
+            aria-label="Dismiss"
+            onClick={() => {
+              setHintHidden(true);
+              try { localStorage.setItem('da-hint-hidden', '1'); } catch { /* */ }
+            }}
+          >
+            <IconClose />
+          </button>
+        </div>
+      )}
+      <p className="footnote">Photos stay on this iPhone.</p>
     </div>
   );
 }
 
 // ---------------------------------------------------------------- Patient
+interface Tile extends ViewRecord { thumb?: string; count: number }
+
 function PatientScreen({ id, onBack, onCapture, onHistory }: { id: string; onBack: () => void; onCapture: (v: string) => void; onHistory: (v: string) => void }) {
-  const [views, setViews] = useState<(ViewRecord & { thumb?: string })[]>([]);
+  const [tiles, setTiles] = useState<Tile[] | null>(null);
   const [picker, setPicker] = useState(false);
   useEffect(() => {
-    let urls: string[] = [];
+    const urls: string[] = [];
     (async () => {
       const vs = await db.listViews(id);
-      const out = [];
+      const out: Tile[] = [];
       for (const v of vs) {
         let thumb: string | undefined;
-        if (v.baselineId) {
-          const c = await db.getCapture(v.baselineId);
-          if (c) {
-            thumb = URL.createObjectURL(c.thumb);
-            urls.push(thumb);
-          }
+        const caps = await db.listCaptures(id, v.viewKey);
+        const b = caps.find((c) => c.id === v.baselineId);
+        if (b) {
+          thumb = URL.createObjectURL(b.thumb);
+          urls.push(thumb);
         }
-        out.push({ ...v, thumb });
+        out.push({ ...v, thumb, count: caps.length });
       }
       out.sort((a, b) => VIEWS.findIndex((x) => x.key === a.viewKey) - VIEWS.findIndex((x) => x.key === b.viewKey));
-      setViews(out);
+      setTiles(out);
     })();
-    return () => {
-      urls.forEach((u) => URL.revokeObjectURL(u));
-      urls = [];
-    };
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, [id]);
 
-  // motion permission must be requested inside a user gesture on iOS
+  // iOS only grants motion access inside a tap
   const go = (view: string) => {
     if (motion.permission === 'unknown') void motion.requestPermission();
     onCapture(view);
   };
-  const used = new Set(views.map((v) => v.viewKey));
+  const used = new Set((tiles ?? []).map((v) => v.viewKey));
+  const caption = (t: Tile) => {
+    if (!t.baselineId) return 'No baseline yet';
+    const f = t.count - 1;
+    return f <= 0 ? 'Baseline' : f === 1 ? 'Baseline + 1 follow-up' : `Baseline + ${f} follow-ups`;
+  };
+
   return (
-    <div className="page">
-      <header className="hdr">
-        <button className="link" onClick={onBack}>
-          ‹ Patients
-        </button>
-        <h2>{id}</h2>
-        <span />
-      </header>
-      <div className="tiles">
-        {views.map((v) => (
-          <div key={v.key} className="tile" onClick={() => go(v.viewKey)}>
-            {v.thumb ? <img src={v.thumb} alt="" /> : <div className="noimg">no baseline</div>}
-            <div className="tlabel">{viewDef(v.viewKey).label}</div>
-            <button
-              className="tinfo"
-              onClick={(e) => {
-                e.stopPropagation();
-                onHistory(v.viewKey);
-              }}
-              aria-label="History"
-            >
-              ⋯
+    <div className="screen">
+      <NavBar back="Patients" onBack={onBack} />
+      <h1 className="largetitle">{id}</h1>
+      <div className="tilegrid">
+        {(tiles ?? []).map((t) => (
+          <div key={t.key} className="tile">
+            <button className="tile-img" onClick={() => go(t.viewKey)} aria-label={`Photograph ${viewDef(t.viewKey).label}`}>
+              {t.thumb ? <img src={t.thumb} alt="" /> : <span className="tile-empty"><IconCamera /></span>}
             </button>
+            <div className="tile-meta">
+              <button className="tile-text" onClick={() => go(t.viewKey)}>
+                <span className="tile-title">{viewDef(t.viewKey).label}</span>
+                <span className="tile-sub">{caption(t)}</span>
+              </button>
+              <button className="tile-more" onClick={() => onHistory(t.viewKey)} aria-label="Photo history">
+                <IconEllipsis />
+              </button>
+            </div>
           </div>
         ))}
-        <div className="tile add" onClick={() => setPicker(true)}>
-          <span>+</span>
-          <div className="tlabel">New View</div>
+        <div className="tile">
+          <button className="tile-img tile-add" onClick={() => setPicker(true)} aria-label="Add a view">
+            <IconPlus />
+          </button>
+          <div className="tile-meta">
+            <button className="tile-text" onClick={() => setPicker(true)}>
+              <span className="tile-title">Add view</span>
+              <span className="tile-sub">{used.size === 0 ? 'Choose the first view' : `${VIEWS.length - used.size} more available`}</span>
+            </button>
+          </div>
         </div>
       </div>
+
       {picker && (
-        <div className="sheet" onClick={() => setPicker(false)}>
-          <div className="sheetbody" onClick={(e) => e.stopPropagation()}>
-            <div className="sectionlabel">Standard views</div>
+        <Sheet title="Add a view" onClose={() => setPicker(false)}>
+          <div className="group flush">
             {VIEWS.map((v) => (
               <button
                 key={v.key}
-                className="sheetitem"
+                className="cell"
                 disabled={used.has(v.key)}
                 onClick={async () => {
-                  // request motion permission synchronously, inside the tap (iOS requirement)
                   if (motion.permission === 'unknown') void motion.requestPermission();
                   await db.putView({ key: `${id}|${v.key}`, patientId: id, viewKey: v.key, baselineId: null, createdAt: Date.now() });
                   setPicker(false);
                   onCapture(v.key);
                 }}
               >
-                {v.label}
-                {used.has(v.key) && <small> · exists</small>}
+                <span className="cell-main">
+                  <span className="cell-title">{v.label}</span>
+                </span>
+                {used.has(v.key) ? <IconCheck className="chev accent" /> : <IconChevronRight className="chev" />}
               </button>
             ))}
           </div>
-        </div>
+        </Sheet>
       )}
     </div>
   );
 }
 
+function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={title}>
+        <div className="grabber" />
+        <div className="sheet-head">
+          <span>{title}</span>
+          <button className="sheet-close" onClick={onClose} aria-label="Close">
+            <IconClose />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- History / compare
+type CompareMode = 'photo' | 'blend' | 'baseline';
+
 function History({ patientId, viewKey, onBack, onCapture }: { patientId: string; viewKey: string; onBack: () => void; onCapture: () => void }) {
   const [caps, setCaps] = useState<CaptureRec[]>([]);
   const [view, setView] = useState<ViewRecord | undefined>();
   const [sel, setSel] = useState<CaptureRec | null>(null);
-  const [mix, setMix] = useState(0);
   const [urls, setUrls] = useState<Record<string, string>>({});
+  const [mode, setMode] = useState<CompareMode>('photo');
+  const [mix, setMix] = useState(0.5);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [info, setInfo] = useState(false);
+
   const reload = async () => {
     const c = await db.listCaptures(patientId, viewKey);
     const v = await db.getView(patientId, viewKey);
@@ -227,232 +367,287 @@ function History({ patientId, viewKey, onBack, onCapture }: { patientId: string;
   useEffect(() => {
     if (!sel) return;
     const s = URL.createObjectURL(sel.master);
-    const b = base ? URL.createObjectURL(base.master) : undefined;
+    const b = base && base.id !== sel.id ? URL.createObjectURL(base.master) : undefined;
     setFull({ sel: s, base: b });
-    setMix(0);
+    setMode('photo');
     return () => {
       URL.revokeObjectURL(s);
       if (b) URL.revokeObjectURL(b);
     };
   }, [sel, base]);
 
-  const name = (c: CaptureRec) => `${patientId}_${viewKey}_${stamp(c.createdAt)}${c.id === view?.baselineId ? '_baseline' : ''}.jpg`;
+  const fileName = (c: CaptureRec) => `${patientId}_${viewKey}_${stamp(c.createdAt)}${c.id === view?.baselineId ? '_baseline' : ''}.jpg`;
+  const ordered = [...caps].reverse();
+  const isBase = (c: CaptureRec) => c.id === view?.baselineId;
 
-  return (
-    <div className="page">
-      <header className="hdr">
-        <button className="link" onClick={sel ? () => setSel(null) : onBack}>
-          ‹ {sel ? 'History' : patientId}
-        </button>
-        <h2>{viewDef(viewKey).label}</h2>
-        <button className="link" onClick={onCapture}>
-          Camera
-        </button>
-      </header>
-      {!sel && (
-        <div className="hist">
-          {caps.length === 0 && <p className="hint">No photographs yet.</p>}
-          {caps.map((c) => (
-            <div key={c.id} className="hrow" onClick={() => setSel(c)}>
-              <img src={urls[c.id]} alt="" />
-              <div>
-                <div>{new Date(c.createdAt).toLocaleString()}</div>
-                <small>
-                  {c.id === view?.baselineId ? 'Baseline · ' : ''}
-                  {c.width}×{c.height}
-                  {c.meta && (c.meta as { registration?: { E?: number } }).registration?.E != null
-                    ? ` · E ${((c.meta as { registration: { E: number } }).registration.E).toFixed(3)}`
-                    : ''}
-                </small>
-              </div>
-            </div>
-          ))}
+  if (sel) {
+    const canCompare = !!full.base;
+    const reg = (sel.meta as { registration?: { E?: number; inliers?: number } } | undefined)?.registration;
+    return (
+      <div className="screen viewer-screen">
+        <NavBar back="Photos" onBack={() => { setSel(null); setInfo(false); setConfirmDelete(false); }} title={new Date(sel.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} />
+        <div className="viewer-stage">
+          {full.sel && <img src={full.sel} alt="" style={{ opacity: mode === 'baseline' ? 0 : 1 }} />}
+          {full.base && <img src={full.base} alt="" className="over" style={{ opacity: mode === 'baseline' ? 1 : mode === 'blend' ? mix : 0 }} />}
+          {isBase(sel) && <span className="badge-on-image">Baseline</span>}
         </div>
-      )}
-      {sel && (
-        <div className="viewer">
-          <div className="stack">
-            {full.sel && <img src={full.sel} alt="" />}
-            {full.base && sel.id !== base?.id && <img src={full.base} alt="" style={{ opacity: mix }} className="over" />}
+        {canCompare && (
+          <div className="compare">
+            <div className="segmented" role="tablist">
+              {(['photo', 'blend', 'baseline'] as CompareMode[]).map((m) => (
+                <button key={m} role="tab" aria-selected={mode === m} className={mode === m ? 'on' : ''} onClick={() => setMode(m)}>
+                  {m === 'photo' ? 'This photo' : m === 'blend' ? 'Blend' : 'Baseline'}
+                </button>
+              ))}
+            </div>
+            {mode === 'blend' && <input className="slider" type="range" min={0} max={1} step={0.01} value={mix} onChange={(e) => setMix(+e.target.value)} aria-label="Blend amount" />}
+            <p className="footnote">Shown exactly as captured. Any misalignment you see is real.</p>
           </div>
-          {base && sel.id !== base.id && (
-            <label className="mix">
-              <span>Selected</span>
-              <input type="range" min={0} max={1} step={0.01} value={mix} onChange={(e) => setMix(+e.target.value)} />
-              <span>Baseline</span>
-            </label>
-          )}
-          <p className="hint small">Unwarped comparison: both images shown exactly as acquired. Residual misalignment is real.</p>
-          <div className="actions">
-            <button onClick={() => void shareOrDownload([new File([sel.master], name(sel), { type: 'image/jpeg' })], name(sel))}>Save / Share</button>
+        )}
+        {info && (
+          <div className="group infogroup">
+            <div className="cell static"><span className="cell-main"><span className="cell-title">Captured</span></span><span className="cell-value">{new Date(sel.createdAt).toLocaleString()}</span></div>
+            <div className="cell static"><span className="cell-main"><span className="cell-title">Size</span></span><span className="cell-value">{sel.width} × {sel.height}</span></div>
+            {reg?.E != null && <div className="cell static"><span className="cell-main"><span className="cell-title">Alignment error</span></span><span className="cell-value">{(reg.E * 100).toFixed(1)}% of width</span></div>}
             <button
+              className="cell"
               onClick={() => {
                 const meta = new Blob([JSON.stringify({ id: sel.id, patientId, viewKey, role: sel.role, createdAt: sel.createdAt, ...sel.meta }, null, 2)], { type: 'application/json' });
-                void shareOrDownload([new File([meta], name(sel).replace('.jpg', '.json'), { type: 'application/json' })], 'metadata');
+                void shareOrDownload([new File([meta], fileName(sel).replace('.jpg', '.json'), { type: 'application/json' })], 'metadata');
               }}
             >
-              Metadata
+              <span className="cell-main"><span className="cell-title accent-text">Export capture data</span></span>
             </button>
-            {sel.id !== view?.baselineId && (
-              <button
-                onClick={async () => {
-                  if (!view) return;
-                  await db.putView({ ...view, baselineId: sel.id });
-                  await reload();
-                }}
-              >
-                Make baseline
-              </button>
-            )}
-            <ConfirmButton
-              label="Delete"
-              onConfirm={async () => {
-                await db.deleteCapture(sel.id);
-                if (view && view.baselineId === sel.id) {
-                  const rest = caps.filter((c) => c.id !== sel.id);
-                  await db.putView({ ...view, baselineId: rest[0]?.id ?? null });
-                }
-                setSel(null);
-                await reload();
-              }}
-            />
           </div>
+        )}
+        <div className="toolbar">
+          <button onClick={() => void shareOrDownload([new File([sel.master], fileName(sel), { type: 'image/jpeg' })], fileName(sel))} aria-label="Save or share">
+            <IconShare />
+          </button>
+          <button
+            onClick={async () => {
+              if (!view || isBase(sel)) return;
+              await db.putView({ ...view, baselineId: sel.id });
+              await reload();
+            }}
+            className={isBase(sel) ? 'on' : ''}
+            aria-label={isBase(sel) ? 'This is the baseline' : 'Make baseline'}
+          >
+            <IconPin />
+            <span>{isBase(sel) ? 'Baseline' : 'Make baseline'}</span>
+          </button>
+          <button onClick={() => setInfo(!info)} className={info ? 'on' : ''} aria-label="Details">
+            <IconInfo />
+          </button>
+          <button
+            className={confirmDelete ? 'danger' : ''}
+            onClick={async () => {
+              if (!confirmDelete) {
+                setConfirmDelete(true);
+                setTimeout(() => setConfirmDelete(false), 3000);
+                return;
+              }
+              await db.deleteCapture(sel.id);
+              if (view && view.baselineId === sel.id) {
+                const rest = caps.filter((c) => c.id !== sel.id);
+                await db.putView({ ...view, baselineId: rest[0]?.id ?? null });
+              }
+              setSel(null);
+              setConfirmDelete(false);
+              await reload();
+            }}
+            aria-label="Delete photo"
+          >
+            <IconTrash />
+            {confirmDelete && <span>Delete photo</span>}
+          </button>
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="screen">
+      <NavBar
+        back={patientId}
+        onBack={onBack}
+        right={<button className="nav-icon" onClick={onCapture} aria-label="Open camera"><IconCamera /></button>}
+      />
+      <h1 className="largetitle">{viewDef(viewKey).label}</h1>
+      {caps.length === 0 ? (
+        <div className="empty">
+          <p>No photos of this view yet.</p>
+          <button className="btn-filled" onClick={onCapture}>Take baseline</button>
+        </div>
+      ) : (
+        <>
+          <p className="subtitle">{caps.length === 1 ? '1 photo' : `${caps.length} photos`}, newest first</p>
+          <div className="photogrid">
+            {ordered.map((c) => (
+              <button key={c.id} className="photo" onClick={() => setSel(c)}>
+                <img src={urls[c.id]} alt="" />
+                {isBase(c) && <span className="photo-badge">Baseline</span>}
+                <span className="photo-date">{relDay(c.createdAt)}</span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
 }
 
-function ConfirmButton({ label, onConfirm }: { label: string; onConfirm: () => void }) {
-  const [armed, setArmed] = useState(false);
+// ---------------------------------------------------------------- Settings & diagnostics
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
-    <button
-      className={armed ? 'danger' : ''}
-      onClick={() => {
-        if (armed) onConfirm();
-        else {
-          setArmed(true);
-          setTimeout(() => setArmed(false), 2500);
-        }
-      }}
-    >
-      {armed ? 'Tap to confirm' : label}
-    </button>
+    <label className="cell static">
+      <span className="cell-main"><span className="cell-title">{label}</span></span>
+      <input type="checkbox" className="ios-switch" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+    </label>
   );
 }
 
-// ---------------------------------------------------------------- Settings & diagnostics
 function SettingsScreen({ settings, onChange, onBack }: { settings: Settings; onChange: (s: Settings) => void; onBack: () => void }) {
   const [logs, setLogs] = useState<LogRecord[]>([]);
+  const [advanced, setAdvanced] = useState(false);
   useEffect(() => {
     void db.listLogs().then(setLogs);
   }, []);
+  const set = <K extends keyof Settings>(k: K, v: Settings[K]) => onChange({ ...settings, [k]: v });
   const num = (k: keyof Settings, label: string, step = 1) => (
-    <label className="row">
-      <span>{label}</span>
-      <input type="number" step={step} value={settings[k] as number} onChange={(e) => onChange({ ...settings, [k]: Number(e.target.value) })} />
+    <label className="cell static" key={k}>
+      <span className="cell-main"><span className="cell-title">{label}</span></span>
+      <input className="numfield" type="number" inputMode="decimal" step={step} value={settings[k] as number} onChange={(e) => set(k, Number(e.target.value) as never)} />
     </label>
   );
-  const bool = (k: keyof Settings, label: string) => (
-    <label className="row">
-      <span>{label}</span>
-      <input type="checkbox" checked={settings[k] as boolean} onChange={(e) => onChange({ ...settings, [k]: e.target.checked })} />
-    </label>
-  );
+
   return (
-    <div className="page">
-      <header className="hdr">
-        <button className="link" onClick={onBack}>
-          ‹ Back
-        </button>
-        <h2>Settings</h2>
-        <span />
-      </header>
-      <div className="sectionlabel">Capture</div>
-      {bool('haptics', 'Haptic confirmation')}
-      {bool('autoCapture', 'Auto-capture at peak opportunity')}
-      <label className="row">
-        <span>Camera resolution</span>
-        <select value={settings.resolution} onChange={(e) => onChange({ ...settings, resolution: e.target.value as Settings['resolution'] })}>
-          <option value="1080">1080p (faster)</option>
-          <option value="4k">4K (if available)</option>
-        </select>
-      </label>
-      {bool('coach', 'Coaching text (one instruction at a time)')}
-      <label className="row">
-        <span>Angle guide source</span>
-        <select value={settings.angleSource} onChange={(e) => onChange({ ...settings, angleSource: e.target.value as Settings['angleSource'] })}>
-          <option value="auto">Auto (tilt sensor if baseline has it)</option>
-          <option value="gravity">Tilt sensor only</option>
-          <option value="image">Image only</option>
-        </select>
-      </label>
-      {num('angleTolDeg', 'Angle tolerance (°)', 0.25)}
-      {bool('developer', 'Diagnostics overlay (also: long-press view name)')}
+    <div className="screen">
+      <NavBar back="Patients" onBack={onBack} />
+      <h1 className="largetitle">Settings</h1>
 
-      <div className="sectionlabel">Registration (developer)</div>
-      {num('procLong', 'Processing size (long side px)', 16)}
-      {num('refTarget', 'Reference keypoints kept')}
-      {num('refDetect', 'Reference ORB detections')}
-      {num('refGrid', 'Coverage grid (N×N)')}
-      {num('liveDetect', 'Live ORB detections')}
-      {num('ratio', 'Ratio test', 0.01)}
-      {num('maxHamming', 'Max Hamming distance')}
-      {num('ransacPx', 'RANSAC threshold (px)', 0.5)}
-      {num('minInliers', 'Min inliers')}
-      {bool('clahe', 'CLAHE contrast normalisation')}
-      {bool('tracking', 'Guided temporal matching')}
-      {num('trackRadius', 'Tracking search radius (px)')}
-      {num('trackRatio', 'Tracking ratio test', 0.01)}
-      {num('smoothing', 'Smoothing (0–1, higher = faster)', 0.05)}
-      {num('strongE', 'Strong convergence E', 0.005)}
-      {num('convergingE', 'Converging E (cue scale)', 0.01)}
-      {num('sharpMin', 'Sharpness floor')}
-      {num('motionMax', 'Max gyro rate at peak (°/s)')}
-      {bool('flipYaw', 'Flip yaw cue sign')}
-      {bool('flipPitch', 'Flip pitch cue sign')}
-      <div className="row">
-        <button onClick={() => onChange({ ...DEFAULTS, developer: settings.developer })}>Reset to defaults</button>
+      <div className="group-header">Guidance</div>
+      <div className="group">
+        <Toggle label="Coaching text" checked={settings.coach} onChange={(v) => set('coach', v)} />
+        <Toggle label="Haptic confirmation" checked={settings.haptics} onChange={(v) => set('haptics', v)} />
+        <Toggle label="Auto-capture when aligned" checked={settings.autoCapture} onChange={(v) => set('autoCapture', v)} />
+        <label className="cell static">
+          <span className="cell-main"><span className="cell-title">Angle guide</span></span>
+          <select className="menu" value={settings.angleSource} onChange={(e) => set('angleSource', e.target.value as Settings['angleSource'])}>
+            <option value="auto">Automatic</option>
+            <option value="gravity">Tilt sensor</option>
+            <option value="image">Image</option>
+          </select>
+        </label>
       </div>
+      <p className="group-footer">Automatic uses the tilt sensor when the baseline recorded it, otherwise the image.</p>
 
-      <div className="sectionlabel">Diagnostic logs ({logs.length})</div>
-      <p className="hint small">Every capture session is logged frame-by-frame on this device (last 40 kept). Export after clinical testing.</p>
-      {logs.map((l) => (
-        <div key={l.id} className="logrow">
-          <div>
-            <div>
-              {l.patientId} · {viewDef(l.viewKey).label}
-            </div>
-            <small>
-              {new Date(l.startedAt).toLocaleString()} · {Math.round((l.endedAt - l.startedAt) / 1000)}s · {l.rows.length} frames
-            </small>
-          </div>
-          <div className="logbtns">
-            <button
-              onClick={() => {
-                const base = `dentalalign_log_${l.patientId}_${l.viewKey}_${stamp(l.startedAt)}`;
-                void shareOrDownload(
-                  [
-                    new File([toCSV(l.rows)], base + '_frames.csv', { type: 'text/csv' }),
-                    new File([JSON.stringify({ info: l.info, events: l.events }, null, 2)], base + '_events.json', { type: 'application/json' }),
-                  ],
-                  base,
-                );
-              }}
-            >
-              Export
-            </button>
-            <ConfirmButton
-              label="✕"
-              onConfirm={async () => {
-                await db.deleteLog(l.id);
-                setLogs(await db.listLogs());
-              }}
-            />
+      <div className="group-header">Camera</div>
+      <div className="group">
+        <div className="cell static">
+          <span className="cell-main"><span className="cell-title">Resolution</span></span>
+          <div className="segmented small">
+            {(['1080', '4k'] as const).map((r) => (
+              <button key={r} className={settings.resolution === r ? 'on' : ''} onClick={() => set('resolution', r)}>
+                {r === '1080' ? '1080p' : '4K'}
+              </button>
+            ))}
           </div>
         </div>
-      ))}
-      <p className="hint small">Build {__BUILD__}</p>
+      </div>
+      <p className="group-footer">1080p keeps guidance fastest. 4K gives larger photos if your iPhone allows it.</p>
+
+      <div className="group-header">Diagnostics</div>
+      <div className="group">
+        <Toggle label="Show measurements on camera" checked={settings.developer} onChange={(v) => set('developer', v)} />
+        <button className="cell" onClick={() => setAdvanced(!advanced)}>
+          <span className="cell-main"><span className="cell-title">Advanced tuning</span></span>
+          <IconChevronRight className={`chev ${advanced ? 'rot' : ''}`} />
+        </button>
+        {advanced && (
+          <>
+            {num('angleTolDeg', 'Angle tolerance (°)', 0.25)}
+            {num('procLong', 'Processing size (px)', 16)}
+            {num('refTarget', 'Reference points')}
+            {num('liveDetect', 'Live features')}
+            {num('ratio', 'Ratio test', 0.01)}
+            {num('ransacPx', 'RANSAC threshold (px)', 0.5)}
+            {num('minInliers', 'Minimum inliers')}
+            {num('trackRadius', 'Tracking radius (px)')}
+            {num('smoothing', 'Smoothing', 0.05)}
+            {num('strongE', 'Aligned threshold', 0.005)}
+            {num('sharpMin', 'Sharpness floor')}
+            {num('motionMax', 'Steadiness limit (°/s)')}
+            <Toggle label="Contrast normalisation" checked={settings.clahe} onChange={(v) => set('clahe', v)} />
+            <Toggle label="Temporal tracking" checked={settings.tracking} onChange={(v) => set('tracking', v)} />
+            <Toggle label="Flip left–right angle" checked={settings.flipYaw} onChange={(v) => set('flipYaw', v)} />
+            <Toggle label="Flip up–down angle" checked={settings.flipPitch} onChange={(v) => set('flipPitch', v)} />
+            <button className="cell" onClick={() => onChange({ ...DEFAULTS, developer: settings.developer })}>
+              <span className="cell-main"><span className="cell-title accent-text">Restore defaults</span></span>
+            </button>
+          </>
+        )}
+      </div>
+      <p className="group-footer">You can also long-press the view name on the camera screen to show measurements.</p>
+
+      <div className="group-header">Session logs</div>
+      {logs.length === 0 ? (
+        <p className="group-footer">Each camera session is recorded here so alignment problems can be diagnosed later.</p>
+      ) : (
+        <>
+          <div className="group">
+            {logs.map((l) => (
+              <LogCell key={l.id} l={l} onDeleted={async () => setLogs(await db.listLogs())} />
+            ))}
+          </div>
+          <p className="group-footer">The last 40 sessions are kept on this iPhone. Export sends the frame-by-frame CSV and an events file.</p>
+        </>
+      )}
+      <p className="footnote">Dental Align, build {__BUILD__}</p>
+    </div>
+  );
+}
+
+function LogCell({ l, onDeleted }: { l: LogRecord; onDeleted: () => void }) {
+  const [armed, setArmed] = useState(false);
+  const base = `dentalalign_log_${l.patientId}_${l.viewKey}_${stamp(l.startedAt)}`;
+  return (
+    <div className="cell static">
+      <span className="cell-main">
+        <span className="cell-title">{l.patientId}, {viewDef(l.viewKey).label}</span>
+        <span className="cell-sub">
+          {new Date(l.startedAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}, {Math.round((l.endedAt - l.startedAt) / 1000)} s
+        </span>
+      </span>
+      <button
+        className="pill"
+        onClick={() =>
+          void shareOrDownload(
+            [
+              new File([toCSV(l.rows)], base + '_frames.csv', { type: 'text/csv' }),
+              new File([JSON.stringify({ info: l.info, events: l.events }, null, 2)], base + '_events.json', { type: 'application/json' }),
+            ],
+            base,
+          )
+        }
+      >
+        Export
+      </button>
+      <button
+        className={`pill ${armed ? 'danger' : 'quiet'}`}
+        onClick={async () => {
+          if (!armed) {
+            setArmed(true);
+            setTimeout(() => setArmed(false), 2500);
+            return;
+          }
+          await db.deleteLog(l.id);
+          onDeleted();
+        }}
+        aria-label="Delete log"
+      >
+        {armed ? 'Delete' : <IconTrash />}
+      </button>
     </div>
   );
 }

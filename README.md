@@ -1,5 +1,7 @@
 # Dental Align — Goal 1 experimental prototype
 
+*Design v0.3: native iOS look in the Dental House palette (slate, bronze, mist), San Francisco type, inset grouped lists, Apple Camera-style capture, light and dark mode.*
+
 > 1. **The reference is the target. The target never chases the live image.**
 > 2. **Measure mismatch; never hide mismatch by warping the clinical photograph.**
 > 3. **Changed anatomy should stop contributing to registration rather than be mistaken for camera-position error.**
