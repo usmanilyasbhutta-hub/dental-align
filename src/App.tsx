@@ -19,6 +19,14 @@ type Route =
 
 const BASE = import.meta.env.BASE_URL;
 
+// keep the bottom search dock above the iOS keyboard
+if (typeof window !== 'undefined' && window.visualViewport) {
+  const vv = window.visualViewport;
+  const upd = () => document.documentElement.style.setProperty('--kb', `${Math.max(0, window.innerHeight - vv.height - vv.offsetTop)}px`);
+  vv.addEventListener('resize', upd);
+  vv.addEventListener('scroll', upd);
+}
+
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
   const [settings, setSettingsState] = useState<Settings>(loadSettings);
@@ -71,15 +79,29 @@ function NavBar({ back, onBack, title, right }: { back?: string; onBack?: () => 
     <nav className="navbar">
       <div className="nav-left">
         {onBack && (
-          <button className="nav-back" onClick={onBack}>
+          <button className="glass glass-circle interactive" onClick={onBack} aria-label={`Back to ${back}`}>
             <IconChevronLeft />
-            <span>{back}</span>
           </button>
         )}
       </div>
       <div className="nav-title">{title}</div>
       <div className="nav-right">{right}</div>
     </nav>
+  );
+}
+
+/** Segmented control with a sliding glass lens behind the selected item. */
+function Segmented<T extends string>({ items, value, onChange, small }: { items: { value: T; label: string }[]; value: T; onChange: (v: T) => void; small?: boolean }) {
+  const i = Math.max(0, items.findIndex((x) => x.value === value));
+  return (
+    <div className={`segmented ${small ? 'small' : ''}`} role="tablist" style={{ ['--n' as string]: items.length, ['--i' as string]: i }}>
+      <span className="seg-lens" aria-hidden />
+      {items.map((it) => (
+        <button key={it.value} role="tab" aria-selected={it.value === value} className={it.value === value ? 'on' : ''} onClick={() => onChange(it.value)}>
+          {it.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -126,14 +148,15 @@ function Home({ onOpen, onSettings }: { onOpen: (id: string) => void; onSettings
   };
 
   return (
-    <div className="screen">
-      <NavBar right={<button className="nav-icon" onClick={onSettings} aria-label="Settings"><IconGear /></button>} />
+    <div className="screen with-dock">
+      <NavBar right={<button className="glass glass-circle interactive" onClick={onSettings} aria-label="Settings"><IconGear /></button>} />
       <header className="brandhead">
-        <img src={`${BASE}brand/logo.png`} alt="Dental House" className="brandlogo" />
+        <img src={`${BASE}brand/logo.jpg`} alt="Dental House" className="brandlogo" />
       </header>
       <h1 className="largetitle">Patients</h1>
+      <div className="dock" style={{ bottom: 'calc(var(--kb, 0px) + env(safe-area-inset-bottom) + 14px)' }}>
       <form
-        className="searchfield"
+        className="searchfield glass"
         onSubmit={(e) => {
           e.preventDefault();
           void open(q);
@@ -156,6 +179,17 @@ function Home({ onOpen, onSettings }: { onOpen: (id: string) => void; onSettings
           </button>
         )}
       </form>
+      <button
+        className="glass glass-circle large tinted interactive"
+        aria-label={clean ? `Add patient ${clean}` : 'Add patient'}
+        onClick={() => {
+          if (clean) void open(clean);
+          else (document.querySelector('.searchfield input') as HTMLInputElement | null)?.focus();
+        }}
+      >
+        <IconPlus />
+      </button>
+      </div>
 
       {clean && !exact && (
         <div className="group">
@@ -170,8 +204,8 @@ function Home({ onOpen, onSettings }: { onOpen: (id: string) => void; onSettings
 
       {rows && rows.length === 0 && !clean && (
         <div className="empty">
-          <img src={`${BASE}brand/mark.png`} alt="" />
-          <p>Type a patient ID above to start their first photo series.</p>
+          <img src={`${BASE}brand/mark.jpg`} alt="" />
+          <p>Type a patient ID in the search bar to start their first photo series.</p>
         </div>
       )}
 
@@ -322,11 +356,11 @@ function PatientScreen({ id, onBack, onCapture, onHistory }: { id: string; onBac
 function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return (
     <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={title}>
+      <div className="sheet glass" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={title}>
         <div className="grabber" />
         <div className="sheet-head">
           <span>{title}</span>
-          <button className="sheet-close" onClick={onClose} aria-label="Close">
+          <button className="glass glass-circle small interactive" onClick={onClose} aria-label="Close">
             <IconClose />
           </button>
         </div>
@@ -393,13 +427,11 @@ function History({ patientId, viewKey, onBack, onCapture }: { patientId: string;
         </div>
         {canCompare && (
           <div className="compare">
-            <div className="segmented" role="tablist">
-              {(['photo', 'blend', 'baseline'] as CompareMode[]).map((m) => (
-                <button key={m} role="tab" aria-selected={mode === m} className={mode === m ? 'on' : ''} onClick={() => setMode(m)}>
-                  {m === 'photo' ? 'This photo' : m === 'blend' ? 'Blend' : 'Baseline'}
-                </button>
-              ))}
-            </div>
+            <Segmented
+              items={[{ value: 'photo', label: 'This photo' }, { value: 'blend', label: 'Blend' }, { value: 'baseline', label: 'Baseline' }]}
+              value={mode}
+              onChange={(m) => setMode(m as CompareMode)}
+            />
             {mode === 'blend' && <input className="slider" type="range" min={0} max={1} step={0.01} value={mix} onChange={(e) => setMix(+e.target.value)} aria-label="Blend amount" />}
             <p className="footnote">Shown exactly as captured. Any misalignment you see is real.</p>
           </div>
@@ -420,7 +452,8 @@ function History({ patientId, viewKey, onBack, onCapture }: { patientId: string;
             </button>
           </div>
         )}
-        <div className="toolbar">
+        <div className="toolbar-dock">
+        <div className="toolbar glass">
           <button onClick={() => void shareOrDownload([new File([sel.master], fileName(sel), { type: 'image/jpeg' })], fileName(sel))} aria-label="Save or share">
             <IconShare />
           </button>
@@ -462,6 +495,7 @@ function History({ patientId, viewKey, onBack, onCapture }: { patientId: string;
             {confirmDelete && <span>Delete photo</span>}
           </button>
         </div>
+        </div>
       </div>
     );
   }
@@ -471,7 +505,7 @@ function History({ patientId, viewKey, onBack, onCapture }: { patientId: string;
       <NavBar
         back={patientId}
         onBack={onBack}
-        right={<button className="nav-icon" onClick={onCapture} aria-label="Open camera"><IconCamera /></button>}
+        right={<button className="glass glass-circle interactive" onClick={onCapture} aria-label="Open camera"><IconCamera /></button>}
       />
       <h1 className="largetitle">{viewDef(viewKey).label}</h1>
       {caps.length === 0 ? (
@@ -546,20 +580,14 @@ function SettingsScreen({ settings, onChange, onBack }: { settings: Settings; on
       <div className="group">
         <div className="cell static">
           <span className="cell-main"><span className="cell-title">Resolution</span></span>
-          <div className="segmented small">
-            {(['1080', '4k'] as const).map((r) => (
-              <button key={r} className={settings.resolution === r ? 'on' : ''} onClick={() => set('resolution', r)}>
-                {r === '1080' ? '1080p' : '4K'}
-              </button>
-            ))}
-          </div>
+          <Segmented small items={[{ value: '1080', label: '1080p' }, { value: '4k', label: '4K' }]} value={settings.resolution} onChange={(r) => set('resolution', r as Settings['resolution'])} />
         </div>
       </div>
       <p className="group-footer">1080p keeps guidance fastest. 4K gives larger photos if your iPhone allows it.</p>
 
       <div className="group-header">Diagnostics</div>
       <div className="group">
-        <Toggle label="Show measurements on camera" checked={settings.developer} onChange={(v) => set('developer', v)} />
+        <Toggle label="Show measurements" checked={settings.developer} onChange={(v) => set('developer', v)} />
         <button className="cell" onClick={() => setAdvanced(!advanced)}>
           <span className="cell-main"><span className="cell-title">Advanced tuning</span></span>
           <IconChevronRight className={`chev ${advanced ? 'rot' : ''}`} />

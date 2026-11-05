@@ -1,6 +1,6 @@
 # Dental Align — Goal 1 experimental prototype
 
-*Design v0.3: native iOS look in the Dental House palette (slate, bronze, mist), San Francisco type, inset grouped lists, Apple Camera-style capture, light and dark mode.*
+*Design v0.4: Liquid Glass (iOS 26-inspired). Glass only on controls (floating nav buttons, bottom search dock, floating toolbar, inset sheet, camera controls); content stays solid. Dental House logo in its original colours, slate/bronze tint, light and dark mode.*
 
 > 1. **The reference is the target. The target never chases the live image.**
 > 2. **Measure mismatch; never hide mismatch by warping the clinical photograph.**

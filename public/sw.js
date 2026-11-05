@@ -1,7 +1,7 @@
 // Offline cache for the app shell and the ~10 MB OpenCV.js engine.
 // Bump VERSION on each deployment to refresh caches.
 const VERSION = 'da-__BUILD__';
-const CORE = ['./', './index.html', './opencv.js', './cv-worker.js', './manifest.webmanifest', './icons/icon-192.png', './brand/logo.png', './brand/mark.png'];
+const CORE = ['./', './index.html', './opencv.js', './cv-worker.js', './manifest.webmanifest', './icons/icon-192.png', './brand/logo.jpg', './brand/mark.jpg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()));

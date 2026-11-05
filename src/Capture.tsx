@@ -230,24 +230,24 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
       {flash && <div className="flash" />}
 
       <div className="cam-top">
-        <button className="cam-btn" onClick={onClose} aria-label="Close camera">
+        <button className="glass glass-circle clear interactive" onClick={onClose} aria-label="Close camera">
           <IconClose />
         </button>
-        <div className="cam-title" onPointerDown={startPress} onPointerUp={endPress} onPointerLeave={endPress}>
+        <div className="cam-title glass clear" onPointerDown={startPress} onPointerUp={endPress} onPointerLeave={endPress}>
           <span className="cam-view">{def.label}</span>
           <span className="cam-pid">{baseline ? patientId : `${patientId}, first photo`}</span>
         </div>
-        <button className={`cam-btn ${ghost > 0 && baseUrl ? 'on' : ''}`} onClick={cycleGhost} aria-label="Ghost opacity" disabled={!baseUrl}>
+        <button className={`glass glass-circle clear interactive ${ghost > 0 && baseUrl ? 'on' : ''}`} onClick={cycleGhost} aria-label="Ghost opacity" disabled={!baseUrl}>
           <IconGhost />
         </button>
       </div>
 
       {st?.error && <div className="cam-notice err">{st.error}</div>}
-      {!st?.error && st && !st.workerReady && <div className="cam-notice">Preparing alignment…</div>}
-      {st?.aspectMismatch && <div className="cam-notice">Hold the phone the same way as in the baseline</div>}
+      {!st?.error && st && !st.workerReady && <div className="cam-notice glass clear">Preparing alignment…</div>}
+      {st?.aspectMismatch && <div className="cam-notice glass clear">Hold the phone the same way as in the baseline</div>}
       {st?.lightingHint && !settings.developer && <div className="lighthint">{st.lightingHint === 'darker' ? 'Lighting is dimmer than the baseline' : 'Lighting is brighter than the baseline'}</div>}
-      {toast && <div className="cam-toast">{toast}</div>}
-      {coachMsg && !toast && <div className={`coach ${coachMsg.kind}`}>{coachMsg.text}</div>}
+      {toast && <div className="cam-toast glass clear">{toast}</div>}
+      {coachMsg && !toast && <div className={`coach glass clear ${coachMsg.kind}`}>{coachMsg.text}</div>}
 
       {settings.developer && st && <DevHud st={st} log={logRef.current} angle={angleInfo} />}
 
@@ -259,7 +259,7 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
           <span className="shutter-halo" />
           <span className="shutter-core" />
         </button>
-        <div className="cam-mode">{baseline ? 'Follow-up' : 'Baseline'}</div>
+        <div className="cam-mode glass clear">{baseline ? 'Follow-up' : 'Baseline'}</div>
       </div>
     </div>
   );
