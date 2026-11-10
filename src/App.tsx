@@ -4,10 +4,12 @@ import { db, type Capture as CaptureRec, type LogRecord, type ViewRecord } from 
 import { VIEWS, viewDef } from './views';
 import { DEFAULTS, loadSettings, saveSettings, type Settings } from './settings';
 import { motion } from './motion';
+import { sound } from './sound';
+import { importPhoto } from './importPhoto';
 import { shareOrDownload, stamp, toCSV } from './share';
 import {
   IconCamera, IconCheck, IconChevronLeft, IconChevronRight, IconClose, IconEllipsis, IconGear, IconInfo,
-  IconPin, IconPlus, IconSearch, IconShare, IconTrash,
+  IconPhoto, IconPin, IconPlus, IconSearch, IconShare, IconTrash,
 } from './icons';
 
 type Route =
@@ -282,6 +284,7 @@ function PatientScreen({ id, onBack, onCapture, onHistory }: { id: string; onBac
   // iOS only grants motion access inside a tap
   const go = (view: string) => {
     if (motion.permission === 'unknown') void motion.requestPermission();
+    sound.unlock();
     onCapture(view);
   };
   const used = new Set((tiles ?? []).map((v) => v.viewKey));
@@ -335,6 +338,7 @@ function PatientScreen({ id, onBack, onCapture, onHistory }: { id: string; onBac
                 disabled={used.has(v.key)}
                 onClick={async () => {
                   if (motion.permission === 'unknown') void motion.requestPermission();
+                  sound.unlock();
                   await db.putView({ key: `${id}|${v.key}`, patientId: id, viewKey: v.key, baselineId: null, createdAt: Date.now() });
                   setPicker(false);
                   onCapture(v.key);
@@ -505,12 +509,31 @@ function History({ patientId, viewKey, onBack, onCapture }: { patientId: string;
       <NavBar
         back={patientId}
         onBack={onBack}
-        right={<button className="glass glass-circle interactive" onClick={onCapture} aria-label="Open camera"><IconCamera /></button>}
+        right={
+          <>
+            <label className="glass glass-circle interactive" aria-label="Add a photo from your library">
+              <IconPhoto />
+              <input
+                type="file"
+                accept="image/*"
+                hidden
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!f) return;
+                  await importPhoto(f, patientId, viewKey);
+                  await reload();
+                }}
+              />
+            </label>
+            <button className="glass glass-circle interactive" onClick={onCapture} aria-label="Open camera"><IconCamera /></button>
+          </>
+        }
       />
       <h1 className="largetitle">{viewDef(viewKey).label}</h1>
       {caps.length === 0 ? (
         <div className="empty">
-          <p>No photos of this view yet.</p>
+          <p>No photos of this view yet. Take the baseline here, or add one from your photo library with the picture button above.</p>
           <button className="btn-filled" onClick={onCapture}>Take baseline</button>
         </div>
       ) : (
@@ -563,7 +586,8 @@ function SettingsScreen({ settings, onChange, onBack }: { settings: Settings; on
       <div className="group-header">Guidance</div>
       <div className="group">
         <Toggle label="Coaching text" checked={settings.coach} onChange={(v) => set('coach', v)} />
-        <Toggle label="Haptic confirmation" checked={settings.haptics} onChange={(v) => set('haptics', v)} />
+        <Toggle label="Sound guidance" checked={settings.sound} onChange={(v) => set('sound', v)} />
+        <Toggle label="Haptics (where iOS allows)" checked={settings.haptics} onChange={(v) => set('haptics', v)} />
         <Toggle label="Auto-capture when aligned" checked={settings.autoCapture} onChange={(v) => set('autoCapture', v)} />
         <label className="cell static">
           <span className="cell-main"><span className="cell-title">Angle guide</span></span>
@@ -597,6 +621,7 @@ function SettingsScreen({ settings, onChange, onBack }: { settings: Settings; on
             {num('angleTolDeg', 'Angle tolerance (°)', 0.25)}
             {num('procLong', 'Processing size (px)', 16)}
             {num('refTarget', 'Reference points')}
+            {num('toothShare', 'Share on teeth (0–1)', 0.05)}
             {num('liveDetect', 'Live features')}
             {num('ratio', 'Ratio test', 0.01)}
             {num('ransacPx', 'RANSAC threshold (px)', 0.5)}

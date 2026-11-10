@@ -93,43 +93,60 @@ function setReference(msg) {
     const k = kpv.get(i);
     all.push({ i, x: k.pt.x, y: k.pt.y, response: k.response, octave: k.octave });
   }
-  // ---- spatially distributed (grid / coverage-based) selection
-  const G = params.refGrid; // G x G cells
-  const cellOf = (p) => {
-    const cx = Math.min(G - 1, Math.floor((p.x / w) * G));
-    const cy = Math.min(G - 1, Math.floor((p.y / h) * G));
-    return cy * G + cx;
-  };
-  const buckets = new Map();
-  for (const p of all) {
-    p.cell = cellOf(p);
-    if (!buckets.has(p.cell)) buckets.set(p.cell, []);
-    buckets.get(p.cell).push(p);
+  // ---- hard-tissue preference (added after the first clinical test).
+  // Tongue, lips, stubble and drapes carried most keypoints and all of them move relative to the
+  // arch. Teeth are the rigid structure, so most reference points are taken from tooth-coloured
+  // regions (bright, low redness) when the photo has any; the rest keep whole-frame coverage.
+  let toothMask = null, toothCov = 0;
+  if (msg.mask) {
+    const m = new cv.Mat(h, w, cv.CV_8UC1);
+    m.data.set(new Uint8Array(msg.mask));
+    const k3 = cv.Mat.ones(3, 3, cv.CV_8U), kd = cv.Mat.ones(Math.max(5, Math.round(w / 50)) | 1, Math.max(5, Math.round(w / 50)) | 1, cv.CV_8U);
+    cv.morphologyEx(m, m, cv.MORPH_OPEN, k3);
+    cv.dilate(m, m, kd);
+    toothMask = new Uint8Array(m.data);
+    let on = 0;
+    for (let i = 0; i < toothMask.length; i++) if (toothMask[i]) on++;
+    toothCov = on / toothMask.length;
+    m.delete(); k3.delete(); kd.delete();
   }
-  for (const b of buckets.values()) b.sort((a, c) => c.response - a.response);
-  // round-robin across cells, strongest first, with a minimum spacing
-  const minSpacing = Math.max(4, Math.min(w, h) / (G * 3));
-  const chosen = [];
+  const G = params.refGrid; // G x G cells
+  const cellAt = (p, g) => Math.min(g - 1, Math.floor((p.y / h) * g)) * g + Math.min(g - 1, Math.floor((p.x / w) * g));
+  for (const p of all) {
+    p.cell = cellAt(p, G);
+    p.tooth = !!(toothMask && toothMask[Math.min(h - 1, Math.round(p.y)) * w + Math.min(w - 1, Math.round(p.x))]);
+  }
   const target = params.refTarget;
-  const lists = [...buckets.values()];
-  const ptr = new Array(lists.length).fill(0);
-  let progressed = true;
-  // Each round, every cell contributes its next-strongest point that respects the spacing.
-  while (chosen.length < target && progressed) {
-    progressed = false;
-    for (let li = 0; li < lists.length && chosen.length < target; li++) {
-      const b = lists[li];
-      while (ptr[li] < b.length) {
-        const cand = b[ptr[li]++];
-        let ok = true;
-        for (const c of chosen) {
-          const dx = c.x - cand.x, dy = c.y - cand.y;
-          if (dx * dx + dy * dy < minSpacing * minSpacing) { ok = false; break; }
+  const chosen = [];
+  // coverage-based pick: round-robin across grid cells, strongest first, with a minimum spacing
+  const pick = (list, n, g, tight) => {
+    const minSpacing = tight ? 3 : Math.max(3, Math.min(w, h) / (g * 3));
+    const buckets = new Map();
+    for (const p of list) { const c = cellAt(p, g); if (!buckets.has(c)) buckets.set(c, []); buckets.get(c).push(p); }
+    const lists = [...buckets.values()];
+    for (const l of lists) l.sort((x, y) => y.response - x.response);
+    const ptr = new Array(lists.length).fill(0);
+    let got = 0, progressed = true;
+    while (got < n && progressed) {
+      progressed = false;
+      for (let li = 0; li < lists.length && got < n; li++) {
+        const l = lists[li];
+        while (ptr[li] < l.length) {
+          const cand = l[ptr[li]++];
+          let ok = true;
+          for (const c of chosen) {
+            const dx = c.x - cand.x, dy = c.y - cand.y;
+            if (dx * dx + dy * dy < minSpacing * minSpacing) { ok = false; break; }
+          }
+          if (ok) { chosen.push(cand); got++; progressed = true; break; }
         }
-        if (ok) { chosen.push(cand); progressed = true; break; }
       }
     }
-  }
+    return got;
+  };
+  let toothPicked = 0;
+  if (toothCov >= 0.02) toothPicked = pick(all.filter((p) => p.tooth), Math.round(target * params.toothShare), G * 2, true);
+  pick(toothPicked ? all.filter((p) => !p.tooth) : all, target - chosen.length, G);
   // descriptors for chosen
   const sel = new cv.Mat(chosen.length, desc.cols, desc.type());
   chosen.forEach((p, r) => {
@@ -140,7 +157,7 @@ function setReference(msg) {
   const cov4 = new Set(chosen.map((p) => Math.min(3, Math.floor((p.y / h) * 4)) * 4 + Math.min(3, Math.floor((p.x / w) * 4))));
   ref = {
     w, h,
-    kps: chosen.map((p) => ({ x: p.x, y: p.y, response: p.response, cell: p.cell })),
+    kps: chosen.map((p) => ({ x: p.x, y: p.y, response: p.response, cell: p.cell, tooth: p.tooth })),
     desc: sel,
     cells,
     gray: new Uint8Array(gray),
@@ -151,6 +168,8 @@ function setReference(msg) {
     type: 'reference',
     w, h,
     detected: all.length,
+    toothPoints: toothPicked,
+    toothCoverage: toothCov,
     points: ref.kps,
     coverage4: cov4.size / 16,
     ms: performance.now() - t0,

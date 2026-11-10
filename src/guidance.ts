@@ -45,6 +45,13 @@ export function imageCue(g: Registration | null, flipYaw: boolean, flipPitch: bo
 export interface Coach {
   text: string;
   kind: 'angle' | 'distance' | 'move' | 'rotate' | 'steady' | 'ok' | 'search';
+  /** unit screen direction for move / angle cues */
+  dx?: number;
+  dy?: number;
+  /** size of the correction in image-width units (move) */
+  amount?: number;
+  /** distance: +1 = move closer, -1 = move back. rotate: +1 = clockwise */
+  sign?: number;
 }
 
 export function coach(opts: {
@@ -55,27 +62,36 @@ export function coach(opts: {
   motionRate: number;
   motionMax: number;
   sharpOk: boolean;
+  aligned: boolean;
 }): Coach | null {
-  const { hasRef, reg, angle, angleTolDeg, motionRate, motionMax, sharpOk } = opts;
-  const angDir = (a: AngleCue) =>
-    Math.abs(a.x) > Math.abs(a.y) ? (a.x < 0 ? 'Aim left' : 'Aim right') : a.y < 0 ? 'Aim higher' : 'Aim lower';
+  const { hasRef, reg, angle, angleTolDeg, motionRate, motionMax, sharpOk, aligned } = opts;
+  const angCue = (a: AngleCue, suffix: string): Coach => {
+    const horiz = Math.abs(a.x) > Math.abs(a.y);
+    const text = horiz ? (a.x < 0 ? 'Aim left' : 'Aim right') : a.y < 0 ? 'Aim higher' : 'Aim lower';
+    const n = Math.hypot(a.x, a.y) || 1;
+    return { text: text + suffix, kind: 'angle', dx: a.x / n, dy: a.y / n };
+  };
   if (!hasRef) {
     if (motionRate > motionMax) return { text: 'Hold steady', kind: 'steady' };
     return null;
   }
-  // angle first when clearly off: it also corrupts the other estimates
-  if (angle && angle.deg > angleTolDeg * 2.5) return { text: `${angDir(angle)} · ${angle.deg.toFixed(0)}°`, kind: 'angle' };
-  if (!reg) return { text: 'Find the reference — match the ghost', kind: 'search' };
-  const tTol = 0.015, sTol = 0.015, rTol = (1 * Math.PI) / 180;
+  // The tilt sensor is precise, so a clear angle error is corrected first (it distorts everything else).
+  // The image-based angle is noisy, so it is only raised late and only when large.
+  const sensor = angle?.source === 'gravity';
+  if (angle && sensor && angle.deg > angleTolDeg * 2.5) return angCue(angle, ` ${angle.deg.toFixed(0)}°`);
+  if (!reg) return { text: 'Line up the outline with the teeth', kind: 'search' };
+  const tTol = 0.02, sTol = 0.02, rTol = (1.5 * Math.PI) / 180;
   const ls = Math.log(reg.scale);
-  if (Math.abs(ls) > sTol * 2) return { text: ls > 0 ? 'Move back' : 'Move closer', kind: 'distance' };
-  if (Math.hypot(reg.tx, reg.ty) > tTol) {
-    const t = Math.abs(reg.tx) > Math.abs(reg.ty) ? (reg.tx > 0 ? 'Move right' : 'Move left') : reg.ty > 0 ? 'Move down' : 'Move up';
-    return { text: t, kind: 'move' };
+  const dist = (soft: boolean): Coach => ({ text: ls > 0 ? (soft ? 'A little back' : 'Move back') : soft ? 'A little closer' : 'Move closer', kind: 'distance', sign: ls > 0 ? -1 : 1 });
+  if (Math.abs(ls) > sTol * 2.5) return dist(false);
+  const t = Math.hypot(reg.tx, reg.ty);
+  if (t > tTol) {
+    const text = Math.abs(reg.tx) > Math.abs(reg.ty) ? (reg.tx > 0 ? 'Move right' : 'Move left') : reg.ty > 0 ? 'Move down' : 'Move up';
+    return { text, kind: 'move', dx: reg.tx / t, dy: reg.ty / t, amount: t };
   }
-  if (Math.abs(ls) > sTol) return { text: ls > 0 ? 'A little back' : 'A little closer', kind: 'distance' };
-  if (Math.abs(reg.roll) > rTol) return { text: reg.roll > 0 ? 'Rotate ↻' : 'Rotate ↺', kind: 'rotate' };
-  if (angle && angle.deg > angleTolDeg) return { text: `${angDir(angle)} slightly`, kind: 'angle' };
+  if (Math.abs(ls) > sTol) return dist(true);
+  if (Math.abs(reg.roll) > rTol) return { text: reg.roll > 0 ? 'Rotate clockwise' : 'Rotate anticlockwise', kind: 'rotate', sign: reg.roll > 0 ? 1 : -1 };
+  if (angle && angle.deg > (sensor ? angleTolDeg : Math.max(5, angleTolDeg * 3))) return angCue(angle, ' slightly');
   if (motionRate > motionMax || !sharpOk) return { text: 'Hold still', kind: 'steady' };
-  return { text: 'Aligned. Take the photo', kind: 'ok' };
+  return aligned ? { text: 'Aligned. Take the photo', kind: 'ok' } : { text: 'Nearly there. Hold steady', kind: 'steady' };
 }

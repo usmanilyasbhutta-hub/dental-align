@@ -38,6 +38,14 @@ Later deployments: rebuild, re-drag `dist`. The service worker picks up the new 
 - **Follow-ups:** the baseline appears as a **fixed translucent ghost** (◐ cycles its opacity). Move the phone and patient until the live anatomy settles onto it.
 - Thumbnail (bottom-left) → history: unwarped baseline/follow-up comparison slider, **Save / Share** (iOS share sheet → *Save Image* puts it in Photos), metadata export, **Make baseline**, delete.
 
+### v0.5: photo import, zoom, stronger guidance (after the first clinical test)
+
+- **Use any photo as the baseline.** On a new view tap **Use a photo** (camera screen), or the picture button in a view's history, then **Make baseline**. The file is stored untouched. For guidance it is fitted to the camera frame by uniform scale + centre crop only, never warped. Hold the phone the same way round as the photo (a landscape photo needs the phone in landscape).
+- **Zoom (1×/2×/3×).** A centre crop of the 4K stream, so the mouth fills the frame from a distance the iPhone can focus at. A baseline taken in the app records its zoom and follow-ups reuse it.
+- **Reference points prefer teeth.** In the first clinical photos most points sat on tongue, lips, stubble and drapes, which all move relative to the arch. About 70% of points now come from tooth-coloured regions when present.
+- **Cues:** outline ghost (edges of the baseline drawn over the live view), one large arrow for the current correction, a frame around the picture that turns green when aligned, a progress ring around the shutter, larger coach text.
+- **Sound guidance:** ticks that speed up and rise in pitch as you close in, a chime and steady tone when aligned. Script-triggered haptics were removed from Safari in iOS 26.5, so sound is the reliable eyes-free channel in a web app; real haptics need the native build.
+
 ### Angle guide and coaching (v0.2, added after the first real test)
 
 - **Crosshair = angulation.** A small fixed **+** sits at the centre; a bold **+** shows where to **aim** the camera. Tilt the phone until the bold + sits on the fixed one (white → amber → green). It updates at sensor speed, independently of image matching.

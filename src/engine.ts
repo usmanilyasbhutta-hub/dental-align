@@ -79,7 +79,11 @@ export interface EngineState {
   workerReady: boolean;
   cameraReady: boolean;
   error: string | null;
-  aspectMismatch: boolean;
+  aspectMismatch: boolean; // baseline is landscape but phone is portrait, or the reverse
+  zoom: number;
+  ghostUrl: string | null; // reference fitted to the camera frame (uniform scale + crop only)
+  outlineUrl: string | null; // edge drawing of the same reference
+  toothPoints: number;
   last: FrameResult | null;
   smooth: Registration | null; // smoothed estimate used for guidance
   raw: Registration | null;
@@ -137,7 +141,7 @@ function regFrom(r: FrameResult): Registration | null {
     Es,
     Er,
     Ep,
-    E: Et + Es + Er + Ep,
+    E: Et + Es + Er + 0.5 * Ep,
   };
 }
 
@@ -146,7 +150,7 @@ function recomputeE(g: Registration): Registration {
   g.Es = Math.abs(Math.log(g.scale));
   g.Er = Math.abs(g.roll) * 0.5;
   g.Ep = g.perspResidual;
-  g.E = g.Et + g.Es + g.Er + g.Ep;
+  g.E = g.Et + g.Es + g.Er + 0.5 * g.Ep;
   return g;
 }
 
@@ -199,6 +203,10 @@ export class CaptureEngine {
       cameraReady: false,
       error: null,
       aspectMismatch: false,
+      zoom: 1,
+      ghostUrl: null,
+      outlineUrl: null,
+      toothPoints: 0,
       last: null,
       smooth: null,
       raw: null,
@@ -230,8 +238,15 @@ export class CaptureEngine {
   }
 
   // ------------------------------------------------------------------ camera
-  async startCamera() {
-    const hi = this.settings.resolution === '4k';
+  zoom = 1;
+  private hiStream = false;
+  private wantHi() {
+    return this.settings.resolution === '4k' || this.zoom > 1;
+  }
+
+  private async openStream(): Promise<boolean> {
+    const hi = this.wantHi();
+    this.hiStream = hi;
     const constraints: MediaStreamConstraints = {
       audio: false,
       video: {
@@ -245,10 +260,10 @@ export class CaptureEngine {
       this.stream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (e) {
       this.fail('Camera unavailable: ' + (e as Error).message + '. Camera access needs HTTPS and permission.');
-      return;
+      return false;
     }
     this.track = this.stream.getVideoTracks()[0];
-    // Keep zoom fixed (spec §21) where the platform exposes it.
+    // Hold the optical zoom at 1x (spec §21); our zoom is a centre crop that we control and record.
     try {
       const caps = (this.track.getCapabilities?.() ?? {}) as MediaTrackCapabilities & { zoom?: { min: number; max: number } };
       if (caps.zoom) {
@@ -259,6 +274,7 @@ export class CaptureEngine {
       /* not supported */
     }
     this.video.srcObject = this.stream;
+    this.video.style.transform = this.zoom > 1 ? `scale(${this.zoom})` : '';
     this.video.setAttribute('playsinline', '');
     this.video.muted = true;
     await this.video.play().catch(() => {});
@@ -266,12 +282,43 @@ export class CaptureEngine {
       if (this.video.videoWidth) return res();
       this.video.onloadedmetadata = () => res();
     });
+    return true;
+  }
+
+  async startCamera() {
+    if (!(await this.openStream())) return;
     this.state.cameraReady = true;
-    this.state.videoDims = { w: this.video.videoWidth, h: this.video.videoHeight };
+    this.state.videoDims = this.cropRect();
     this.onEvent({ type: 'camera', settings: this.cameraInfo() });
     this.emit();
     this.running = true;
     this.schedule();
+    void this.applyReference();
+  }
+
+  /** Centre crop of the camera frame used as the working image. zoom 1 = the whole frame. */
+  cropRect() {
+    const vw = this.video.videoWidth, vh = this.video.videoHeight;
+    const w = Math.round(vw / this.zoom / 2) * 2, h = Math.round(vh / this.zoom / 2) * 2;
+    return { x: Math.round((vw - w) / 2), y: Math.round((vh - h) / 2), w, h };
+  }
+
+  /** Digital zoom (centre crop). Switches to the 4K stream when zoomed so the crop stays sharp. */
+  async setZoom(z: number) {
+    z = Math.max(1, Math.min(4, z));
+    if (z === this.zoom) return;
+    this.zoom = z;
+    this.state.zoom = z;
+    this.video.style.transform = z > 1 ? `scale(${z})` : '';
+    this.onEvent({ type: 'zoom', zoom: z });
+    this.state.smooth = null;
+    this.prevRaw = null;
+    if (this.stream && this.wantHi() !== this.hiStream) {
+      this.stream.getTracks().forEach((t) => t.stop());
+      await this.openStream();
+      this.onEvent({ type: 'camera', settings: this.cameraInfo() });
+    }
+    this.emit();
   }
 
   cameraInfo(): Record<string, unknown> {
@@ -287,6 +334,8 @@ export class CaptureEngine {
       settings: s,
       capabilities: caps,
       video: { w: this.video.videoWidth, h: this.video.videoHeight },
+      zoom: this.zoom,
+      crop: this.video.videoWidth ? this.cropRect() : null,
     };
   }
 
@@ -330,10 +379,12 @@ export class CaptureEngine {
   }
 
   private sendFrame() {
-    const vw = this.video.videoWidth, vh = this.video.videoHeight;
+    const cr = this.cropRect();
+    const vw = cr.w, vh = cr.h;
     if (!this.state.videoDims || this.state.videoDims.w !== vw || this.state.videoDims.h !== vh) {
       this.state.videoDims = { w: vw, h: vh };
       this.onEvent({ type: 'video-dims-changed', w: vw, h: vh });
+      void this.applyReference(); // re-fit the reference to the new frame shape
     }
     const { w, h } = this.procSize(vw, vh);
     if (this.procCanvas.width !== w || this.procCanvas.height !== h) {
@@ -341,7 +392,7 @@ export class CaptureEngine {
       this.procCanvas.height = h;
     }
     this.state.procDims = { w, h };
-    this.procCtx.drawImage(this.video, 0, 0, w, h);
+    this.procCtx.drawImage(this.video, cr.x, cr.y, vw, vh, 0, 0, w, h);
     const gray = toGray(this.procCtx.getImageData(0, 0, w, h));
     // native-resolution centre crop for focus/sharpness assessment
     const cs = Math.min(384, vw, vh);
@@ -349,13 +400,13 @@ export class CaptureEngine {
       this.cropCanvas.width = cs;
       this.cropCanvas.height = cs;
     }
-    this.cropCtx.drawImage(this.video, (vw - cs) / 2, (vh - cs) / 2, cs, cs, 0, 0, cs, cs);
+    this.cropCtx.drawImage(this.video, cr.x + (vw - cs) / 2, cr.y + (vh - cs) / 2, cs, cs, 0, 0, cs, cs);
     const crop = toGray(this.cropCtx.getImageData(0, 0, cs, cs));
 
     const id = ++this.frameId;
     // full-resolution frame for the temporal best-frame buffer
     const entry: RingEntry = { id, t: performance.now(), bitmap: null, pending: Promise.resolve(null), result: null, motion: motion.peekRate() };
-    entry.pending = createImageBitmap(this.video)
+    entry.pending = createImageBitmap(this.video, cr.x, cr.y, vw, vh)
       .then((b) => {
         entry.bitmap = b;
         return b;
@@ -407,40 +458,69 @@ export class CaptureEngine {
   }
 
   // ------------------------------------------------------------------ reference
-  async setReference(blob: Blob | null) {
+  private refBlob: Blob | null = null;
+  private refSeq = 0;
+
+  /** Set (or clear) the reference photograph. It is fitted once camera and worker are ready. */
+  requestReference(blob: Blob | null) {
+    if (blob === this.refBlob) return;
+    this.refBlob = blob;
+    void this.applyReference();
+  }
+
+  /**
+   * Fit the reference to the current camera frame: uniform scale + centre crop only (never a warp),
+   * so a photo from any camera or aspect ratio can serve as the baseline. Produces the processing
+   * image for the worker plus the two ghost renderings (photo and outline) shown on screen.
+   */
+  private async applyReference() {
+    const blob = this.refBlob;
+    const seq = ++this.refSeq;
+    const st = this.state;
     if (!blob) {
-      this.state.hasRef = false;
-      this.state.refPoints = [];
-      this.state.refDims = null;
-      this.worker.postMessage({ type: 'clearReference' });
+      if (st.ghostUrl) URL.revokeObjectURL(st.ghostUrl);
+      if (st.outlineUrl) URL.revokeObjectURL(st.outlineUrl);
+      Object.assign(st, { hasRef: false, refPoints: [], refDims: null, ghostUrl: null, outlineUrl: null, aspectMismatch: false });
+      if (st.workerReady) this.worker.postMessage({ type: 'clearReference' });
       this.emit();
       return;
     }
+    if (!st.workerReady || !this.video.videoWidth) return;
+    const cr = this.cropRect();
     const bmp = await createImageBitmap(blob);
-    const { w, h } = this.procSize(bmp.width, bmp.height);
+    if (seq !== this.refSeq) return bmp.close();
+    st.aspectMismatch = bmp.width > bmp.height !== cr.w > cr.h;
+    // cover-fit source rectangle in the reference photo
+    const k = Math.min(bmp.width / cr.w, bmp.height / cr.h);
+    const sw = cr.w * k, sh = cr.h * k, sx = (bmp.width - sw) / 2, sy = (bmp.height - sh) / 2;
+    const { w, h } = this.procSize(cr.w, cr.h);
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
     const ctx = c.getContext('2d', { willReadFrequently: true })!;
-    ctx.drawImage(bmp, 0, 0, w, h);
-    const gray = toGray(ctx.getImageData(0, 0, w, h));
-    this.state.refDims = { w: bmp.width, h: bmp.height };
+    ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, w, h);
+    const img = ctx.getImageData(0, 0, w, h);
+    const gray = toGray(img);
+    const mask = toothMask(img);
+    // ghost renderings
+    const gs = Math.min(1, 1400 / Math.max(sw, sh));
+    const g = document.createElement('canvas');
+    g.width = Math.round(sw * gs);
+    g.height = Math.round(sh * gs);
+    g.getContext('2d')!.drawImage(bmp, sx, sy, sw, sh, 0, 0, g.width, g.height);
     bmp.close();
+    const [ghost, outline] = await Promise.all([canvasBlob(g, 'image/jpeg', 0.9), canvasBlob(outlineOf(g), 'image/png', 1)]);
+    if (seq !== this.refSeq) return;
+    if (st.ghostUrl) URL.revokeObjectURL(st.ghostUrl);
+    if (st.outlineUrl) URL.revokeObjectURL(st.outlineUrl);
+    st.ghostUrl = URL.createObjectURL(ghost);
+    st.outlineUrl = URL.createObjectURL(outline);
+    st.refDims = { w: g.width, h: g.height };
     const s = this.settings;
     this.worker.postMessage(
-      { type: 'setReference', w, h, gray: gray.buffer, params: { clahe: s.clahe, refDetect: s.refDetect, refTarget: s.refTarget, refGrid: s.refGrid } },
-      [gray.buffer],
+      { type: 'setReference', w, h, gray: gray.buffer, mask: mask.buffer, params: { clahe: s.clahe, refDetect: s.refDetect, refTarget: s.refTarget, refGrid: s.refGrid, toothShare: s.toothShare } },
+      [gray.buffer, mask.buffer],
     );
-  }
-  private refQueue: Blob | null | undefined = undefined;
-
-  /** Queue a reference until the worker is ready. */
-  requestReference(blob: Blob | null) {
-    if (!this.state.workerReady) {
-      this.refQueue = blob;
-      return;
-    }
-    void this.setReference(blob);
   }
 
   // ------------------------------------------------------------------ worker results
@@ -448,10 +528,7 @@ export class CaptureEngine {
     if (m.type === 'ready') {
       this.state.workerReady = true;
       this.onEvent({ type: 'worker-ready' });
-      if (this.refQueue !== undefined) {
-        void this.setReference(this.refQueue);
-        this.refQueue = undefined;
-      }
+      void this.applyReference();
       this.emit();
       return;
     }
@@ -464,12 +541,13 @@ export class CaptureEngine {
     if (m.type === 'reference') {
       this.state.hasRef = true;
       this.state.refPoints = m.points as RefPoint[];
+      this.state.toothPoints = (m.toothPoints as number) ?? 0;
       this.prevRaw = null;
       this.state.smooth = null;
       this.strongLatched = false;
       this.peakLatched = false;
       this.autoCaptured = false;
-      this.onEvent({ type: 'reference-set', detected: m.detected, kept: (m.points as RefPoint[]).length, coverage4: m.coverage4, ms: m.ms });
+      this.onEvent({ type: 'reference-set', toothPoints: m.toothPoints, toothCoverage: m.toothCoverage, detected: m.detected, kept: (m.points as RefPoint[]).length, coverage4: m.coverage4, ms: m.ms });
       this.emit();
       return;
     }
@@ -500,7 +578,6 @@ export class CaptureEngine {
     st.procMs = r.ms;
     st.motionRate = m.rate;
     st.sharpOk = r.sharpness >= s.sharpMin;
-    st.aspectMismatch = r.error === 'aspect';
 
     const raw = r.hasRef ? regFrom(r) : null;
     st.raw = raw;
@@ -755,11 +832,12 @@ export class CaptureEngine {
         bmp.close();
       } else {
         // fallback: grab current video frame
-        width = this.video.videoWidth;
-        height = this.video.videoHeight;
+        const cr2 = this.cropRect();
+        width = cr2.w;
+        height = cr2.h;
         full.width = width;
         full.height = height;
-        full.getContext('2d')!.drawImage(this.video, 0, 0);
+        full.getContext('2d')!.drawImage(this.video, cr2.x, cr2.y, width, height, 0, 0, width, height);
       }
       const master = await canvasBlob(full, 'image/jpeg', 0.95);
       const tc = document.createElement('canvas');
@@ -775,6 +853,7 @@ export class CaptureEngine {
         camera: this.cameraInfo(),
         userAgent: navigator.userAgent,
         procDims: this.state.procDims,
+        zoom: this.zoom,
         selection: { intentFrame: cr.intentId, chosenFrame: chosen?.id ?? null, candidates: scored },
         registration: reg
           ? { tx: reg.tx, ty: reg.ty, scale: reg.scale, rollDeg: (reg.roll * 180) / Math.PI, px: reg.px, py: reg.py, E: reg.E, inliers: r?.inliers, candidates: r?.candidates, inlierRatio: r?.inlierRatio, coverage: r?.coverage }
@@ -785,7 +864,7 @@ export class CaptureEngine {
         // phone attitude at capture: lets follow-ups reproduce angulation from the gravity sensor
         attitude: { gravity: motion.gravity(), orientation: this.motionAcc?.orientation ?? null },
         settings: this.settings,
-        integrity: 'Untouched acquisition: selected camera frame encoded 1:1, no warp, crop, or enhancement.',
+        integrity: 'Untouched acquisition: selected camera frame encoded 1:1 at the recorded zoom (centre crop), no warp or enhancement.',
       };
       this.onEvent({ type: 'captured', chosen: chosen?.id, intent: cr.intentId, candidates: scored.length });
       if (this.settings.haptics) haptic('tick');
@@ -808,4 +887,56 @@ function toGray(img: ImageData): Uint8Array {
 
 function canvasBlob(c: HTMLCanvasElement, type: string, q: number): Promise<Blob> {
   return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('encode failed'))), type, q));
+}
+
+/** Tooth-coloured pixels: bright, low redness, slightly yellow. Used only to bias where reference points are taken. */
+function toothMask(img: ImageData): Uint8Array {
+  const d = img.data;
+  const m = new Uint8Array(img.width * img.height);
+  for (let i = 0, j = 0; j < m.length; i += 4, j++) {
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    const l = (r * 77 + g * 150 + b * 29) >> 8;
+    if (r - g >= 0 && r - g <= 48 && b <= g + 6 && r - b >= 12 && l > 105 && l < 246) m[j] = 255;
+  }
+  return m;
+}
+
+/** Edge drawing of the reference for the outline ghost: white lines on transparent. */
+function outlineOf(src: HTMLCanvasElement): HTMLCanvasElement {
+  const s = Math.min(1, 900 / Math.max(src.width, src.height));
+  const w = Math.round(src.width * s), h = Math.round(src.height * s);
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.filter = 'blur(1.2px)';
+  ctx.drawImage(src, 0, 0, w, h);
+  ctx.filter = 'none';
+  const img = ctx.getImageData(0, 0, w, h);
+  const g = toGray(img);
+  const mag = new Float32Array(w * h);
+  const hist = new Uint32Array(256);
+  for (let y = 1; y < h - 1; y++)
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const gx = g[i - w + 1] + 2 * g[i + 1] + g[i + w + 1] - g[i - w - 1] - 2 * g[i - 1] - g[i + w - 1];
+      const gy = g[i + w - 1] + 2 * g[i + w] + g[i + w + 1] - g[i - w - 1] - 2 * g[i - w] - g[i - w + 1];
+      const v = Math.min(255, Math.hypot(gx, gy) / 4);
+      mag[i] = v;
+      hist[v | 0]++;
+    }
+  // keep roughly the strongest 9% of pixels
+  let acc = 0, thr = 255;
+  const keep = w * h * 0.09;
+  while (thr > 12 && acc < keep) acc += hist[thr--];
+  const d = img.data;
+  for (let i = 0, j = 0; j < mag.length; i += 4, j++) {
+    const a = Math.max(0, Math.min(1, (mag[j] - thr) / (thr * 0.6 + 1)));
+    d[i] = 255;
+    d[i + 1] = 255;
+    d[i + 2] = 255;
+    d[i + 3] = a * 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
 }

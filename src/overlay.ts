@@ -12,7 +12,7 @@
 import type { EngineState } from './engine';
 import type { Settings } from './settings';
 import { drawGenericGuide } from './views';
-import type { AngleCue } from './guidance';
+import type { AngleCue, Coach } from './guidance';
 
 export interface OverlayCtx {
   canvas: HTMLCanvasElement;
@@ -21,6 +21,7 @@ export interface OverlayCtx {
   viewKey: string;
   phoneRoll: number | null;
   angle: AngleCue | null;
+  coach: Coach | null;
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -102,15 +103,15 @@ export class OverlayRenderer {
         const [lx, ly] = liveToScreen(lxy[i * 2], lxy[i * 2 + 1]);
         const d = Math.hypot(lx - rx, ly - ry);
         const [r, gg, b] = colorFor(d);
-        ctx.strokeStyle = `rgba(${r | 0},${gg | 0},${b | 0},${a * 0.75})`;
-        ctx.lineWidth = 1.25;
+        ctx.strokeStyle = `rgba(${r | 0},${gg | 0},${b | 0},${a * 0.4})`;
+        ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(lx, ly);
         ctx.lineTo(rx, ry);
         ctx.stroke();
         ctx.fillStyle = `rgba(${r | 0},${gg | 0},${b | 0},${a})`;
         ctx.beginPath();
-        ctx.arc(rx, ry, 2.2, 0, Math.PI * 2);
+        ctx.arc(rx, ry, 1.8, 0, Math.PI * 2);
         ctx.fill();
       } else {
         ctx.fillStyle = `rgba(255,255,255,${a})`;
@@ -207,6 +208,8 @@ export class OverlayRenderer {
     }
 
     this.drawAngle(ctx, o, W, H);
+    this.drawFrame(ctx, o, W, H, g ? 1 - q : null, strong);
+    this.drawBigCue(ctx, o, W, H, kScreenPerNorm);
   }
 
   /** Angulation crosshair: fixed "+" at the centre, moving "+" shows where to aim. */
@@ -223,7 +226,7 @@ export class OverlayRenderer {
     const ok = a.deg <= tol;
     const col = ok ? '110,235,160' : a.deg <= tol * 3 ? '255,190,70' : '255,255,255';
     const alpha = ok ? 0.55 : 0.95;
-    const arm = 11;
+    const arm = 17;
     ctx.save();
     ctx.lineCap = 'round';
     // fixed target
@@ -241,7 +244,7 @@ export class OverlayRenderer {
       ctx.setLineDash([]);
     }
     ctx.strokeStyle = `rgba(${col},${alpha})`;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 4.5;
     const mx = cx + dx, my = cy + dy;
     ctx.beginPath();
     ctx.moveTo(mx - arm, my); ctx.lineTo(mx + arm, my); ctx.moveTo(mx, my - arm); ctx.lineTo(mx, my + arm);
@@ -251,6 +254,100 @@ export class OverlayRenderer {
       const ang = Math.atan2(dy, dx);
       ctx.translate(mx, my); ctx.rotate(ang);
       ctx.beginPath(); ctx.moveTo(arm + 2, -7); ctx.lineTo(arm + 12, 0); ctx.lineTo(arm + 2, 7); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Peripheral cue: a frame around the picture that thickens and turns green as you close in. */
+  private frameQ = 0;
+  private drawFrame(ctx: CanvasRenderingContext2D, o: OverlayCtx, W: number, H: number, closeness: number | null, strong: boolean) {
+    if (closeness == null) return;
+    this.frameQ = lerp(this.frameQ, closeness, 0.2);
+    const c = this.frameQ;
+    const aligned = strong && (o.state.phase === 'strong' || o.state.phase === 'peak');
+    const [r, g, b] = aligned ? [90, 230, 140] : colorFor(60 * (1 - c));
+    const lw = aligned ? 12 : 3 + 6 * c;
+    const pulse = aligned ? 0.8 + 0.2 * Math.sin((performance.now() - this.t0) / 180) : 1;
+    ctx.save();
+    ctx.strokeStyle = `rgba(${r | 0},${g | 0},${b | 0},${(0.35 + 0.6 * c) * pulse})`;
+    ctx.lineWidth = lw;
+    ctx.shadowColor = `rgba(${r | 0},${g | 0},${b | 0},0.8)`;
+    ctx.shadowBlur = aligned ? 26 : 10 * c;
+    const m = lw / 2 + 2, rad = 26;
+    ctx.beginPath();
+    ctx.moveTo(m + rad, m);
+    ctx.arcTo(W - m, m, W - m, H - m, rad);
+    ctx.arcTo(W - m, H - m, m, H - m, rad);
+    ctx.arcTo(m, H - m, m, m, rad);
+    ctx.arcTo(m, m, W - m, m, rad);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** One large, unmistakable glyph for the correction the coach is asking for. */
+  private drawBigCue(ctx: CanvasRenderingContext2D, o: OverlayCtx, W: number, H: number, pxPerNorm: number) {
+    const c = o.coach;
+    if (!c || !o.state.hasRef) return;
+    const cx = W / 2, cy = H / 2, S = Math.min(W, H);
+    const t = (performance.now() - this.t0) / 1000;
+    const bob = 0.5 + 0.5 * Math.sin(t * 5);
+    const stroke = (draw: () => void, col = '255,255,255') => {
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.lineWidth = 13;
+      draw();
+      ctx.strokeStyle = `rgba(${col},0.96)`;
+      ctx.lineWidth = 7;
+      draw();
+    };
+    const arrow = (x0: number, y0: number, x1: number, y1: number, head = 20, col?: string) => {
+      const a = Math.atan2(y1 - y0, x1 - x0);
+      stroke(() => {
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.moveTo(x1 - head * Math.cos(a - 0.6), y1 - head * Math.sin(a - 0.6));
+        ctx.lineTo(x1, y1);
+        ctx.lineTo(x1 - head * Math.cos(a + 0.6), y1 - head * Math.sin(a + 0.6));
+        ctx.stroke();
+      }, col);
+    };
+    ctx.save();
+    if (c.kind === 'move' && c.dx != null && c.dy != null) {
+      const len = clamp((c.amount ?? 0.1) * pxPerNorm, 46, S * 0.32);
+      const off = S * 0.2 + 8 * bob;
+      arrow(cx + c.dx * off, cy + c.dy * off, cx + c.dx * (off + len), cy + c.dy * (off + len));
+    } else if (c.kind === 'angle' && c.dx != null && c.dy != null) {
+      const off = S * 0.2 + 8 * bob, len = S * 0.14;
+      arrow(cx + c.dx * off, cy + c.dy * off, cx + c.dx * (off + len), cy + c.dy * (off + len), 20, '255,200,120');
+    } else if (c.kind === 'distance' && c.sign) {
+      // closer: arrows burst outward (make it bigger); back: arrows point inward
+      const r0 = S * 0.27, r1 = S * 0.38, k = 6 * bob;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+        const ux = sx * Math.SQRT1_2, uy = sy * Math.SQRT1_2;
+        if (c.sign > 0) arrow(cx + ux * (r0 + k), cy + uy * (r0 + k), cx + ux * (r1 + k), cy + uy * (r1 + k), 16);
+        else arrow(cx + ux * (r1 - k), cy + uy * (r1 - k), cx + ux * (r0 - k), cy + uy * (r0 - k), 16);
+      }
+    } else if (c.kind === 'rotate' && c.sign) {
+      const R = S * 0.3, a0 = -Math.PI / 2 - 0.9, a1 = -Math.PI / 2 + 0.9;
+      const s = c.sign, sh = 0.12 * bob * s;
+      stroke(() => {
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, a0 + sh, a1 + sh);
+        ctx.stroke();
+      });
+      const ae = (s > 0 ? a1 : a0) + sh;
+      const ex = cx + R * Math.cos(ae), ey = cy + R * Math.sin(ae);
+      const tang = ae + (s > 0 ? Math.PI / 2 : -Math.PI / 2);
+      stroke(() => {
+        ctx.beginPath();
+        ctx.moveTo(ex - 20 * Math.cos(tang - 0.6), ey - 20 * Math.sin(tang - 0.6));
+        ctx.lineTo(ex, ey);
+        ctx.lineTo(ex - 20 * Math.cos(tang + 0.6), ey - 20 * Math.sin(tang + 0.6));
+        ctx.stroke();
+      });
     }
     ctx.restore();
   }

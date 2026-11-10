@@ -3,7 +3,8 @@ export interface Settings {
   procLong: number; // long side of the processing image (px)
   refDetect: number; // ORB features detected on the reference before selection
   refTarget: number; // spatially distributed reference keypoints kept (spec: ~50–100)
-  refGrid: number; // grid size for coverage-based selection
+  refGrid: number;
+  toothShare: number; // share of reference points taken from tooth-coloured regions // grid size for coverage-based selection
   liveDetect: number; // ORB features detected per live frame
   ratio: number; // Lowe ratio test
   maxHamming: number;
@@ -30,13 +31,17 @@ export interface Settings {
   coach: boolean; // one short text instruction for the dominant error
   angleSource: 'auto' | 'gravity' | 'image';
   angleTolDeg: number;
+  sound: boolean; // audio proximity guidance
+  ghostMode: 'photo' | 'outline' | 'both' | 'off';
+  zoom: number; // last used digital zoom
 }
 
 export const DEFAULTS: Settings = {
   procLong: 640,
-  refDetect: 2500,
-  refTarget: 120,
+  refDetect: 3000,
+  refTarget: 220,
   refGrid: 8,
+  toothShare: 0.7,
   liveDetect: 1200,
   ratio: 0.8,
   maxHamming: 80,
@@ -49,7 +54,7 @@ export const DEFAULTS: Settings = {
   trackMaxHamming: 64,
   trackRatio: 0.9,
   smoothing: 0.45,
-  strongE: 0.025,
+  strongE: 0.035,
   convergingE: 0.12,
   sharpMin: 60,
   motionMax: 25,
@@ -62,10 +67,13 @@ export const DEFAULTS: Settings = {
   ghostOpacity: 0.35,
   coach: true,
   angleSource: 'auto',
-  angleTolDeg: 1.0,
+  angleTolDeg: 1.5,
+  sound: true,
+  ghostMode: 'both',
+  zoom: 2,
 };
 
-const KEY = 'dental-align-settings-v1';
+const KEY = 'dental-align-settings-v2';
 
 export function loadSettings(): Settings {
   try {

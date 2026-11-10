@@ -329,7 +329,7 @@ input, select { font: inherit; color: inherit; }
 .flash { position: absolute; inset: 0; background: #000; opacity: 0.7; animation: shutterblink 0.22s ease-out forwards; pointer-events: none; }
 @keyframes shutterblink { to { opacity: 0; } }
 
-.cam-top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; padding: calc(env(safe-area-inset-top) + 6px) 14px 10px; }
+.cam-top { position: absolute; top: 0; left: 0; right: 0; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; padding: calc(env(safe-area-inset-top) + 6px) 14px 10px; }
 .cam-title { display: flex; flex-direction: column; align-items: center; line-height: 1.2; padding: 6px 16px; border-radius: 22px; }
 .cam-view { font-size: 15px; font-weight: 600; }
 .cam-pid { font-size: 12px; color: rgba(255, 255, 255, 0.72); letter-spacing: 0.03em; }
@@ -342,14 +342,27 @@ input, select { font: inherit; color: inherit; }
 .cam-thumb { width: 52px; height: 52px; border-radius: 14px; overflow: hidden; background: #1a1e1d; justify-self: start; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.8), 0 6px 16px rgba(0, 0, 0, 0.35); transition: transform 0.3s var(--spring); }
 .cam-thumb:active { transform: scale(1.06); }
 .cam-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.cam-mode { justify-self: end; font-size: 13px; font-weight: 600; color: var(--bronze-light); padding: 8px 14px; border-radius: 18px; }
+.cam-zoom { justify-self: end; width: 52px; height: 52px; border-radius: 50%; font-size: 16px; font-weight: 700; color: var(--bronze-light); font-variant-numeric: tabular-nums; }
+.cam-zoom.locked { color: rgba(255, 255, 255, 0.75); }
+.cam-import { justify-self: start; display: flex; align-items: center; gap: 7px; height: 46px; padding: 0 14px 0 12px; border-radius: 23px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.cam-import svg { font-size: 20px; }
+.cam-tools { display: flex; gap: 8px; }
+.capture .ghost.outline { filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.95)) drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.9)); }
+.capture .cam { transition: transform 0.3s var(--ease); }
+/* progress ring: fills as the picture approaches the baseline */
+.shutter-arc {
+  position: absolute; inset: -11px; border-radius: 50%; pointer-events: none;
+  background: conic-gradient(var(--bronze-light) calc(var(--p, 0) * 360deg), rgba(255, 255, 255, 0.2) 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+}
 
 /* shutter: Apple-white; a bronze halo settles around it when the shot lines up */
 .shutter { position: relative; width: 80px; height: 80px; border-radius: 50%; display: grid; place-items: center; }
 .shutter::before { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 4px solid #fff; transition: border-color 0.35s var(--ease); }
 .shutter-core { width: 64px; height: 64px; border-radius: 50%; background: #fff; transition: transform 0.14s var(--ease); }
 .shutter:active .shutter-core { transform: scale(0.9); }
-.shutter-halo { position: absolute; inset: -11px; border-radius: 50%; border: 2px solid var(--bronze-light); opacity: 0; transform: scale(1.25); transition: opacity 0.4s var(--ease), transform 0.6s var(--spring); }
+.shutter-halo { position: absolute; inset: -18px; border-radius: 50%; border: 2px solid var(--bronze-light); opacity: 0; transform: scale(1.25); transition: opacity 0.4s var(--ease), transform 0.6s var(--spring); }
 .shutter.strong .shutter-halo { opacity: 0.55; transform: scale(1); }
 .shutter.peak::before { border-color: var(--bronze-light); }
 .shutter.peak .shutter-halo { opacity: 1; transform: scale(1); box-shadow: 0 0 20px rgba(201, 171, 134, 0.55); animation: halo 1.8s ease-in-out infinite; }
@@ -359,15 +372,15 @@ input, select { font: inherit; color: inherit; }
 .coach, .cam-toast {
   position: absolute; left: 50%; transform: translateX(-50%);
   bottom: calc(env(safe-area-inset-bottom) + 134px);
-  padding: 10px 18px; border-radius: 22px; white-space: nowrap; pointer-events: none;
-  font-size: 16px; font-weight: 600;
+  padding: 12px 22px; border-radius: 26px; white-space: nowrap; pointer-events: none;
+  font-size: 21px; font-weight: 700;
 }
 .coach.angle { color: var(--bronze-light); }
 .coach.ok {
   --glass-fill: rgba(201, 171, 134, 0.88); --glass-ink: #1c2220;
   --glass-rim: rgba(255, 240, 220, 0.95); --glass-sheen: rgba(255, 248, 235, 0.5);
 }
-.coach.search { font-weight: 500; font-size: 14px; }
+.coach.search { font-weight: 600; font-size: 15px; }
 .cam-toast { font-weight: 500; font-size: 15px; animation: fade 0.2s; }
 .cam-notice { position: absolute; top: calc(env(safe-area-inset-top) + 70px); left: 50%; transform: translateX(-50%); max-width: 86%; text-align: center; padding: 9px 16px; border-radius: 18px; font-size: 14px; }
 .cam-notice.err { --glass-fill: rgba(150, 40, 32, 0.8); }

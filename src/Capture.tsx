@@ -5,7 +5,10 @@ import { motion } from './motion';
 import { db, uid, type Capture as CaptureRec } from './db';
 import { viewDef } from './views';
 import type { Settings } from './settings';
-import { IconClose, IconGhost } from './icons';
+import { IconClose, IconGhost, IconPhoto, IconSpeaker, IconSpeakerOff } from './icons';
+import { sound } from './sound';
+import { haptic } from './haptics';
+import { importPhoto } from './importPhoto';
 import { coach, gravityCue, imageCue, type AngleCue, type Coach, type Vec3 } from './guidance';
 
 interface Props {
@@ -26,11 +29,13 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
   const stateRef = useRef<EngineState | null>(null);
   const [st, setSt] = useState<EngineState | null>(null);
   const [baseline, setBaseline] = useState<CaptureRec | null>(null);
-  const [baseUrl, setBaseUrl] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const shutterRef = useRef<HTMLButtonElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const coachRef = useRef<Coach | null>(null);
   const [lastThumb, setLastThumb] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [ghost, setGhost] = useState(settings.ghostOpacity);
   const [coachMsg, setCoachMsg] = useState<Coach | null>(null);
   const [angleInfo, setAngleInfo] = useState<AngleCue | null>(null);
   const baseGravityRef = useRef<Vec3 | null>(null);
@@ -50,40 +55,47 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
       setBaseline(b);
       const lastC = caps[caps.length - 1];
       if (lastC) setLastThumb(URL.createObjectURL(lastC.thumb));
+      setLoaded(true);
     })();
     return () => {
       alive = false;
     };
   }, [patientId, viewKey]);
 
+  // zoom the baseline was taken at (in-app baselines record it; imported photos do not)
+  const baseZoom = (baseline?.meta as { zoom?: number } | undefined)?.zoom ?? null;
+  const zoomLocked = baseZoom != null;
+
   useEffect(() => {
-    if (!baseline) {
-      baseGravityRef.current = null;
-      setBaseUrl(null);
-      engineRef.current?.requestReference(null);
-      return;
-    }
-    const att = (baseline.meta as { attitude?: { gravity?: Vec3 | null } } | undefined)?.attitude;
+    const att = (baseline?.meta as { attitude?: { gravity?: Vec3 | null } } | undefined)?.attitude;
     baseGravityRef.current = att?.gravity ?? null;
-    if (engineRef.current) engineRef.current.baseGravity = baseGravityRef.current;
-    const u = URL.createObjectURL(baseline.master);
-    setBaseUrl(u);
-    engineRef.current?.requestReference(baseline.master);
-    return () => URL.revokeObjectURL(u);
-  }, [baseline]);
+    const eng = engineRef.current;
+    if (!eng) return;
+    eng.baseGravity = baseGravityRef.current;
+    eng.requestReference(baseline?.master ?? null);
+    if (baseZoom != null) void eng.setZoom(baseZoom);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseline, loaded]);
 
   // ---- engine lifecycle
   useEffect(() => {
+    if (!loaded) return;
     const video = videoRef.current!;
     const eng = new CaptureEngine(video, settingsRef.current);
     engineRef.current = eng;
+    eng.zoom = baseZoom ?? settingsRef.current.zoom ?? 1;
+    eng.state.zoom = eng.zoom;
+    eng.baseGravity = baseGravityRef.current;
+    eng.requestReference(baseline?.master ?? null);
     let lastUi = 0;
     let lastCapturing = false;
     let lastReady = false;
+    let lastGhost: string | null = null;
     eng.onState = (s) => {
       stateRef.current = s;
       const now = performance.now();
-      if (now - lastUi > 120 || s.capturing !== lastCapturing || s.workerReady !== lastReady || !!s.error) {
+      if (now - lastUi > 120 || s.capturing !== lastCapturing || s.workerReady !== lastReady || !!s.error || s.ghostUrl !== lastGhost) {
+        lastGhost = s.ghostUrl;
         lastUi = now;
         lastCapturing = s.capturing;
         lastReady = s.workerReady;
@@ -100,6 +112,10 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
     eng.autoCaptureCb = () => void doCapture();
     void eng.startCamera();
     motion.start();
+    sound.onTick = (q) => {
+      if (settingsRef.current.haptics && q > 0.55) haptic(q >= 1 ? 'success' : 'tick');
+    };
+    sound.start();
 
     const renderer = new OverlayRenderer();
     let raf = 0;
@@ -113,16 +129,20 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
           const gc = cfg.angleSource !== 'image' ? gravityCue(motion.gravity(), baseGravityRef.current) : null;
           angle = gc ?? (cfg.angleSource !== 'gravity' ? imageCue(S.smooth, cfg.flipYaw, cfg.flipPitch) : null);
         }
-        renderer.draw({ canvas: canvasRef.current, state: S, settings: cfg, viewKey, phoneRoll: motion.phoneRoll(), angle });
+        const aligned = S.hasRef && (S.phase === 'strong' || S.phase === 'peak');
+        const closeness = S.hasRef && S.smooth ? 1 - Math.min(1, S.smooth.E / cfg.convergingE) : null;
+        renderer.draw({ canvas: canvasRef.current, state: S, settings: cfg, viewKey, phoneRoll: motion.phoneRoll(), angle, coach: coachRef.current });
+        sound.enabled = cfg.sound;
+        sound.update(closeness, aligned);
+        shutterRef.current?.style.setProperty('--p', String(aligned ? 1 : closeness ?? 0));
         const now = performance.now();
         if (now - lastCoach > 200) {
           lastCoach = now;
           setAngleInfo(angle);
-          setCoachMsg(
-            cfg.coach
-              ? coach({ hasRef: S.hasRef, reg: S.smooth, angle, angleTolDeg: cfg.angleTolDeg, motionRate: S.motionRate, motionMax: cfg.motionMax, sharpOk: S.sharpOk })
-              : null,
-          );
+          coachRef.current = cfg.coach
+            ? coach({ hasRef: S.hasRef, reg: S.smooth, angle, angleTolDeg: cfg.angleTolDeg, motionRate: S.motionRate, motionMax: cfg.motionMax, sharpOk: S.sharpOk, aligned })
+            : null;
+          setCoachMsg(coachRef.current);
         }
       }
       raf = requestAnimationFrame(loop);
@@ -131,6 +151,8 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
 
     return () => {
       cancelAnimationFrame(raf);
+      sound.stop();
+      sound.onTick = null;
       const L = logRef.current;
       const info = { camera: eng.cameraInfo(), settings: settingsRef.current, userAgent: navigator.userAgent, refPoints: eng.state.refPoints.length, motionPermission: motion.permission };
       eng.stop();
@@ -140,12 +162,7 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // reference may have been loaded before the engine existed
-  useEffect(() => {
-    if (engineRef.current && baseline) engineRef.current.requestReference(baseline.master);
-  }, [baseline, st?.workerReady]);
+  }, [loaded]);
 
   // keep engine settings live
   useEffect(() => {
@@ -155,6 +172,7 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
   const busyRef = useRef(false);
   async function doCapture() {
     const eng = engineRef.current;
+    sound.unlock();
     if (!eng || busyRef.current) return;
     busyRef.current = true;
     setFlash(true);
@@ -209,23 +227,48 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
     if (pressT.current) clearTimeout(pressT.current);
   };
 
+  const ghostMode = settings.ghostMode;
   const cycleGhost = () => {
-    const steps = [0, 0.2, 0.35, 0.55];
-    const i = steps.findIndex((x) => Math.abs(x - ghost) < 0.01);
-    const n = steps[(i + 1) % steps.length];
-    setGhost(n);
-    onSettings({ ...settings, ghostOpacity: n });
-    showToast(n === 0 ? 'Ghost off' : `Ghost ${Math.round(n * 100)}%`);
+    const order: Settings['ghostMode'][] = ['both', 'outline', 'photo', 'off'];
+    const n = order[(order.indexOf(ghostMode) + 1) % order.length];
+    onSettings({ ...settings, ghostMode: n });
+    showToast({ both: 'Ghost: photo + outline', outline: 'Ghost: outline', photo: 'Ghost: photo', off: 'Ghost off' }[n]);
   };
+  const cycleZoom = () => {
+    const eng = engineRef.current;
+    if (!eng) return;
+    if (zoomLocked) return showToast(`Zoom is fixed at the baseline's ${baseZoom}×`);
+    const n = eng.zoom >= 3 ? 1 : eng.zoom + 1;
+    void eng.setZoom(n);
+    onSettings({ ...settings, zoom: n });
+  };
+  const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const rec = await importPhoto(f, patientId, viewKey);
+      setLastThumb(URL.createObjectURL(rec.thumb));
+      if (rec.role === 'baseline') {
+        setBaseline(rec);
+        showToast('Photo set as baseline');
+      } else showToast('Photo added');
+    } catch (err) {
+      showToast('Could not read that photo: ' + (err as Error).message);
+    }
+  };
+  const ghostUrl = st?.ghostUrl ?? null;
 
   const phase = st?.phase ?? 'searching';
   const aligned = !!baseline && (phase === 'peak' || phase === 'strong');
   const shutterClass = `shutter ${st?.capturing ? 'busy' : ''} ${baseline && phase === 'peak' ? 'peak' : aligned ? 'strong' : ''}`;
 
   return (
-    <div className="capture">
+    <div className="capture" onPointerDown={() => sound.unlock()}>
       <video ref={videoRef} className="cam" playsInline muted autoPlay />
-      {baseUrl && <img src={baseUrl} className="ghost" style={{ opacity: ghost }} alt="" draggable={false} />}
+      {ghostUrl && <img src={ghostUrl} className="ghost" style={{ opacity: ghostMode === 'photo' ? 0.42 : ghostMode === 'both' ? 0.3 : 0 }} alt="" draggable={false} />}
+      {st?.outlineUrl && <img src={st.outlineUrl} className="ghost outline" style={{ opacity: ghostMode === 'outline' || ghostMode === 'both' ? 0.95 : 0 }} alt="" draggable={false} />}
+      <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPick} />
       <canvas ref={canvasRef} className="overlay" />
       {flash && <div className="flash" />}
 
@@ -235,16 +278,21 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
         </button>
         <div className="cam-title glass clear" onPointerDown={startPress} onPointerUp={endPress} onPointerLeave={endPress}>
           <span className="cam-view">{def.label}</span>
-          <span className="cam-pid">{baseline ? patientId : `${patientId}, first photo`}</span>
+          <span className="cam-pid">{baseline ? `${patientId}, follow-up` : `${patientId}, baseline`}</span>
         </div>
-        <button className={`glass glass-circle clear interactive ${ghost > 0 && baseUrl ? 'on' : ''}`} onClick={cycleGhost} aria-label="Ghost opacity" disabled={!baseUrl}>
-          <IconGhost />
-        </button>
+        <div className="cam-tools">
+          <button className={`glass glass-circle clear interactive ${settings.sound ? 'on' : ''}`} onClick={() => { sound.unlock(); onSettings({ ...settings, sound: !settings.sound }); showToast(settings.sound ? 'Sound guidance off' : 'Sound guidance on'); }} aria-label="Sound guidance">
+            {settings.sound ? <IconSpeaker /> : <IconSpeakerOff />}
+          </button>
+          <button className={`glass glass-circle clear interactive ${ghostMode !== 'off' && ghostUrl ? 'on' : ''}`} onClick={cycleGhost} aria-label="Ghost style" disabled={!ghostUrl}>
+            <IconGhost />
+          </button>
+        </div>
       </div>
 
       {st?.error && <div className="cam-notice err">{st.error}</div>}
       {!st?.error && st && !st.workerReady && <div className="cam-notice glass clear">Preparing alignment…</div>}
-      {st?.aspectMismatch && <div className="cam-notice glass clear">Hold the phone the same way as in the baseline</div>}
+      {st?.aspectMismatch && <div className="cam-notice glass clear">Turn the phone to match the baseline photo</div>}
       {st?.lightingHint && !settings.developer && <div className="lighthint">{st.lightingHint === 'darker' ? 'Lighting is dimmer than the baseline' : 'Lighting is brighter than the baseline'}</div>}
       {toast && <div className="cam-toast glass clear">{toast}</div>}
       {coachMsg && !toast && <div className={`coach glass clear ${coachMsg.kind}`}>{coachMsg.text}</div>}
@@ -252,14 +300,24 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
       {settings.developer && st && <DevHud st={st} log={logRef.current} angle={angleInfo} />}
 
       <div className="cam-bottom">
-        <button className="cam-thumb" onClick={onHistory} aria-label="Photo history">
-          {lastThumb ? <img src={lastThumb} alt="" /> : <span />}
-        </button>
-        <button className={shutterClass} onClick={() => void doCapture()} aria-label="Take photo">
+        {baseline || lastThumb ? (
+          <button className="cam-thumb" onClick={onHistory} aria-label="Photo history">
+            {lastThumb ? <img src={lastThumb} alt="" /> : <span />}
+          </button>
+        ) : (
+          <button className="cam-import glass clear interactive" onClick={() => fileRef.current?.click()}>
+            <IconPhoto />
+            <span>Use a photo</span>
+          </button>
+        )}
+        <button ref={shutterRef} className={shutterClass} onClick={() => void doCapture()} aria-label="Take photo">
+          <span className="shutter-arc" />
           <span className="shutter-halo" />
           <span className="shutter-core" />
         </button>
-        <div className="cam-mode glass clear">{baseline ? 'Follow-up' : 'Baseline'}</div>
+        <button className={`cam-zoom glass clear interactive ${zoomLocked ? 'locked' : ''}`} onClick={cycleZoom} aria-label="Zoom">
+          {st?.zoom ?? 1}×
+        </button>
       </div>
     </div>
   );

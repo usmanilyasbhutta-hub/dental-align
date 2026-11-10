@@ -66,3 +66,12 @@ export const IconCheck = (p: SVGProps<SVGSVGElement>) => (
 export const IconWaveform = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10M21 12h0" /></svg>
 );
+export const IconPhoto = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><rect x="3.5" y="5" width="17" height="14" rx="3" /><circle cx="9" cy="10" r="1.6" /><path d="M4 17l4.5-4.5 3.5 3.5 3-3 5 5" /></svg>
+);
+export const IconSpeaker = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z" /><path d="M15.5 9a4 4 0 010 6M18 6.5a7.5 7.5 0 010 11" /></svg>
+);
+export const IconSpeakerOff = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z" /><path d="M16 9.5l5 5M21 9.5l-5 5" /></svg>
+);
