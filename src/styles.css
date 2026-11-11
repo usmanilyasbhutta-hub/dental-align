@@ -342,7 +342,10 @@ input, select { font: inherit; color: inherit; }
 .cam-thumb { width: 52px; height: 52px; border-radius: 14px; overflow: hidden; background: #1a1e1d; justify-self: start; box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.8), 0 6px 16px rgba(0, 0, 0, 0.35); transition: transform 0.3s var(--spring); }
 .cam-thumb:active { transform: scale(1.06); }
 .cam-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.cam-zoom { justify-self: end; width: 52px; height: 52px; border-radius: 50%; font-size: 16px; font-weight: 700; color: var(--bronze-light); font-variant-numeric: tabular-nums; }
+.cam-right { justify-self: end; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.cam-res { font-size: 11px; font-weight: 600; color: rgba(255, 255, 255, 0.75); font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px #000; white-space: nowrap; }
+.cam-res.low { color: #ffb347; }
+.cam-zoom { width: 52px; height: 52px; border-radius: 50%; font-size: 16px; font-weight: 700; color: var(--bronze-light); font-variant-numeric: tabular-nums; }
 .cam-zoom.locked { color: rgba(255, 255, 255, 0.75); }
 .cam-import { justify-self: start; display: flex; align-items: center; gap: 7px; height: 46px; padding: 0 14px 0 12px; border-radius: 23px; font-size: 14px; font-weight: 600; white-space: nowrap; }
 .cam-import svg { font-size: 20px; }

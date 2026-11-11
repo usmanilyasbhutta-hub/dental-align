@@ -351,9 +351,16 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
           <span className="shutter-halo" />
           <span className="shutter-core" />
         </button>
+        <div className="cam-right">
+          {st?.videoDims && (
+            <span className={`cam-res ${Math.min(st.videoDims.w, st.videoDims.h) < 700 ? 'low' : ''}`}>
+              {st.videoDims.w} × {st.videoDims.h}
+            </span>
+          )}
         <button className={`cam-zoom glass clear interactive ${zoomLocked ? 'locked' : ''}`} onClick={cycleZoom} aria-label="Zoom">
           {Number((st?.zoom ?? 1).toFixed(1))}×
         </button>
+        </div>
       </div>
     </div>
   );

@@ -61,7 +61,7 @@ export const DEFAULTS: Settings = {
   motionMax: 25,
   flipYaw: false,
   flipPitch: false,
-  resolution: '1080',
+  resolution: '4k',
   autoCapture: false,
   haptics: true,
   developer: false,
@@ -75,7 +75,7 @@ export const DEFAULTS: Settings = {
   mainCamera35: 26,
 };
 
-const KEY = 'dental-align-settings-v2';
+const KEY = 'dental-align-settings-v3';
 
 export function loadSettings(): Settings {
   try {

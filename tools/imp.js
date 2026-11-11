@@ -12,7 +12,7 @@ const { chromium } = require('playwright');
   await p.click('.cam-zoom'); await p.waitForTimeout(400); await p.click('.cam-zoom'); await p.waitForTimeout(800);
   console.log('zoom', z0, '->', await p.locator('.cam-zoom').innerText());
   await p.setInputFiles('.capture input[type=file]', '/home/claude/test/import_3x4.jpg');
-  await p.waitForSelector('text=Photo set as baseline'); 
+  await p.waitForSelector('text=Baseline set'); 
   // long-press for diagnostics
   const box = await p.locator('.cam-title').boundingBox(); await p.mouse.move(box.x+box.width/2, box.y+box.height/2); await p.mouse.down(); await p.waitForTimeout(1100); await p.mouse.up();
   await p.waitForTimeout(2500);

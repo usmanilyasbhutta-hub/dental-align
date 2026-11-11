@@ -247,19 +247,29 @@ export class CaptureEngine {
   private async openStream(): Promise<boolean> {
     const hi = this.wantHi();
     this.hiStream = hi;
-    const constraints: MediaStreamConstraints = {
-      audio: false,
-      video: {
-        facingMode: { ideal: 'environment' },
-        width: { ideal: hi ? 3840 : 1920 },
-        height: { ideal: hi ? 2160 : 1080 },
-        frameRate: { ideal: 30 },
-      },
-    };
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (e) {
-      this.fail('Camera unavailable: ' + (e as Error).message + '. Camera access needs HTTPS and permission.');
+    // Ask for the largest stream the phone will give. "ideal" alone lets Safari settle for less,
+    // so exact sizes are tried first, largest to smallest.
+    const base = { facingMode: { ideal: 'environment' }, frameRate: { ideal: 30 } };
+    const tries: MediaTrackConstraints[] = [];
+    if (hi) {
+      tries.push({ ...base, width: { exact: 3840 }, height: { exact: 2160 } });
+      tries.push({ ...base, width: { exact: 2560 }, height: { exact: 1440 } });
+      tries.push({ ...base, width: { ideal: 3840 }, height: { ideal: 2160 } });
+    }
+    tries.push({ ...base, width: { ideal: 1920 }, height: { ideal: 1080 } });
+    let lastErr: Error | null = null;
+    this.stream = null;
+    for (const video of tries) {
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video });
+        break;
+      } catch (e) {
+        lastErr = e as Error;
+        if (lastErr.name === 'NotAllowedError') break;
+      }
+    }
+    if (!this.stream) {
+      this.fail('Camera unavailable: ' + (lastErr?.message ?? 'unknown') + '. Camera access needs HTTPS and permission.');
       return false;
     }
     this.track = this.stream.getVideoTracks()[0];
@@ -449,7 +459,9 @@ export class CaptureEngine {
   private pruneRing() {
     // keep RING_PREV completed frames, plus anything needed by an active capture window
     const keepFrom = this.captureReq ? this.captureReq.intentId - RING_PREV : this.frameId - RING_PREV - 1;
-    const maxKeep = this.settings.resolution === '4k' ? 5 : RING_PREV + RING_NEXT + 3;
+    // full 4K frames are ~33 MB each in memory, so keep fewer of them
+    const big = (this.state.videoDims?.w ?? 0) * (this.state.videoDims?.h ?? 0) > 4e6;
+    const maxKeep = big ? 5 : RING_PREV + RING_NEXT + 3;
     while (this.ring.length && (this.ring[0].id < keepFrom || this.ring.length > maxKeep)) {
       const r = this.ring.shift()!;
       if (r.bitmap) r.bitmap.close();

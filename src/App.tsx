@@ -619,7 +619,7 @@ function SettingsScreen({ settings, onChange, onBack }: { settings: Settings; on
           <Segmented small items={[{ value: '1080', label: '1080p' }, { value: '4k', label: '4K' }]} value={settings.resolution} onChange={(r) => set('resolution', r as Settings['resolution'])} />
         </div>
       </div>
-      <p className="group-footer">1080p keeps guidance fastest. 4K gives larger photos if your iPhone allows it.</p>
+      <p className="group-footer">4K gives the most detail. Choose 1080p only if guidance feels slow.</p>
 
       <div className="group-header">Diagnostics</div>
       <div className="group">
