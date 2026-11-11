@@ -305,7 +305,7 @@ export class CaptureEngine {
 
   /** Digital zoom (centre crop). Switches to the 4K stream when zoomed so the crop stays sharp. */
   async setZoom(z: number) {
-    z = Math.max(1, Math.min(4, z));
+    z = Math.max(1, Math.min(8, Math.round(z * 10) / 10));
     if (z === this.zoom) return;
     this.zoom = z;
     this.state.zoom = z;

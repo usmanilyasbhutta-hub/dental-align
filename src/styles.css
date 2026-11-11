@@ -386,3 +386,11 @@ input, select { font: inherit; color: inherit; }
 .cam-notice.err { --glass-fill: rgba(150, 40, 32, 0.8); }
 .lighthint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 180px); left: 50%; transform: translateX(-50%); font-size: 12px; color: var(--bronze-light); text-shadow: 0 1px 2px #000; white-space: nowrap; }
 .devhud { position: absolute; top: calc(env(safe-area-inset-top) + 62px); left: 8px; right: 8px; font: 10.5px/1.4 ui-monospace, Menlo, monospace; background: rgba(0, 0, 0, 0.55); padding: 6px 8px; border-radius: 12px; pointer-events: none; white-space: nowrap; overflow: hidden; }
+
+/* zoom panel for imported baselines */
+.zoom-panel { position: absolute; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 200px); z-index: 3; padding: 14px 16px; border-radius: 24px; }
+.zoom-row { display: flex; align-items: baseline; gap: 10px; font-size: 15px; }
+.zoom-row strong { font-size: 22px; font-variant-numeric: tabular-nums; color: var(--bronze-light); flex: 1; }
+.zoom-row button, .zoom-note button { color: var(--bronze-light); font-weight: 600; font-size: 15px; padding: 4px 0 4px 10px; }
+.zoom-panel input { width: 100%; margin: 10px 0 8px; accent-color: var(--bronze-light); }
+.zoom-note { font-size: 13px; line-height: 18px; color: rgba(255, 255, 255, 0.8); }

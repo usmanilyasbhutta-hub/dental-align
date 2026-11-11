@@ -34,6 +34,7 @@ export interface Settings {
   sound: boolean; // audio proximity guidance
   ghostMode: 'photo' | 'outline' | 'both' | 'off';
   zoom: number; // last used digital zoom
+  mainCamera35: number; // 35 mm equivalent of this phone's 1x camera (26 on iPhone 14, 24 on 15/16)
 }
 
 export const DEFAULTS: Settings = {
@@ -71,6 +72,7 @@ export const DEFAULTS: Settings = {
   sound: true,
   ghostMode: 'both',
   zoom: 2,
+  mainCamera35: 26,
 };
 
 const KEY = 'dental-align-settings-v2';

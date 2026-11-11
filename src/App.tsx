@@ -6,6 +6,7 @@ import { DEFAULTS, loadSettings, saveSettings, type Settings } from './settings'
 import { motion } from './motion';
 import { sound } from './sound';
 import { importPhoto } from './importPhoto';
+import { describeSettings, type PhotoSettings } from './exif';
 import { shareOrDownload, stamp, toCSV } from './share';
 import {
   IconCamera, IconCheck, IconChevronLeft, IconChevronRight, IconClose, IconEllipsis, IconGear, IconInfo,
@@ -444,6 +445,17 @@ function History({ patientId, viewKey, onBack, onCapture }: { patientId: string;
           <div className="group infogroup">
             <div className="cell static"><span className="cell-main"><span className="cell-title">Captured</span></span><span className="cell-value">{new Date(sel.createdAt).toLocaleString()}</span></div>
             <div className="cell static"><span className="cell-main"><span className="cell-title">Size</span></span><span className="cell-value">{sel.width} × {sel.height}</span></div>
+            {(() => {
+              const m = sel.meta as { exif?: PhotoSettings | null; zoom?: number; imported?: boolean };
+              const text = m.exif ? describeSettings(m.exif) : m.zoom ? `${m.zoom}×` : '';
+              return (
+                <>
+                  {text && <div className="cell static"><span className="cell-main"><span className="cell-title">Camera settings</span></span><span className="cell-value">{text}</span></div>}
+                  {m.exif?.model && <div className="cell static"><span className="cell-main"><span className="cell-title">Camera</span></span><span className="cell-value">{m.exif.model}</span></div>}
+                  {m.imported && <div className="cell static"><span className="cell-main"><span className="cell-title">Source</span></span><span className="cell-value">Imported photo</span></div>}
+                </>
+              );
+            })()}
             {reg?.E != null && <div className="cell static"><span className="cell-main"><span className="cell-title">Alignment error</span></span><span className="cell-value">{(reg.E * 100).toFixed(1)}% of width</span></div>}
             <button
               className="cell"
@@ -521,7 +533,7 @@ function History({ patientId, viewKey, onBack, onCapture }: { patientId: string;
                   const f = e.target.files?.[0];
                   e.target.value = '';
                   if (!f) return;
-                  await importPhoto(f, patientId, viewKey);
+                  await importPhoto(f, patientId, viewKey, loadSettings().mainCamera35);
                   await reload();
                 }}
               />
@@ -618,6 +630,7 @@ function SettingsScreen({ settings, onChange, onBack }: { settings: Settings; on
         </button>
         {advanced && (
           <>
+            {num('mainCamera35', '1× camera, 35 mm equivalent')}
             {num('angleTolDeg', 'Angle tolerance (°)', 0.25)}
             {num('procLong', 'Processing size (px)', 16)}
             {num('refTarget', 'Reference points')}

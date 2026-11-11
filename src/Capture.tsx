@@ -9,6 +9,7 @@ import { IconClose, IconGhost, IconPhoto, IconSpeaker, IconSpeakerOff } from './
 import { sound } from './sound';
 import { haptic } from './haptics';
 import { importPhoto } from './importPhoto';
+import { describeSettings, type PhotoSettings } from './exif';
 import { coach, gravityCue, imageCue, type AngleCue, type Coach, type Vec3 } from './guidance';
 
 interface Props {
@@ -64,7 +65,11 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
 
   // zoom the baseline was taken at (in-app baselines record it; imported photos do not)
   const baseZoom = (baseline?.meta as { zoom?: number } | undefined)?.zoom ?? null;
-  const zoomLocked = baseZoom != null;
+  const imported = !!(baseline?.meta as { imported?: boolean } | undefined)?.imported;
+  const photoExif = (baseline?.meta as { exif?: PhotoSettings | null } | undefined)?.exif ?? null;
+  // a baseline taken in the app fixes the zoom; for an imported photo it stays adjustable
+  const zoomLocked = baseZoom != null && !imported;
+  const [zoomOpen, setZoomOpen] = useState(false);
 
   useEffect(() => {
     const att = (baseline?.meta as { attitude?: { gravity?: Vec3 | null } } | undefined)?.attitude;
@@ -210,9 +215,9 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
     }
   }
 
-  function showToast(t: string) {
+  function showToast(t: string, ms = 1400) {
     setToast(t);
-    setTimeout(() => setToast(null), 1400);
+    setTimeout(() => setToast(null), ms);
   }
 
   // hidden developer toggle: long-press the view label
@@ -238,20 +243,35 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
     const eng = engineRef.current;
     if (!eng) return;
     if (zoomLocked) return showToast(`Zoom is fixed at the baseline's ${baseZoom}×`);
-    const n = eng.zoom >= 3 ? 1 : eng.zoom + 1;
+    if (imported) return setZoomOpen((o) => !o);
+    const n = eng.zoom >= 3 ? 1 : Math.floor(eng.zoom) + 1;
     void eng.setZoom(n);
     onSettings({ ...settings, zoom: n });
+  };
+  /** Zoom for an imported baseline: applied now and saved with that baseline. */
+  const setImportedZoom = (z: number, source: string) => {
+    if (!baseline) return;
+    void engineRef.current?.setZoom(z);
+    const next = { ...baseline, meta: { ...baseline.meta, zoom: z, zoomSource: source } };
+    void db.putCapture(next);
+    setBaseline(next);
   };
   const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
     try {
-      const rec = await importPhoto(f, patientId, viewKey);
+      const rec = await importPhoto(f, patientId, viewKey, settings.mainCamera35);
+      const ex = (rec.meta as { exif?: PhotoSettings | null }).exif;
       setLastThumb(URL.createObjectURL(rec.thumb));
       if (rec.role === 'baseline') {
         setBaseline(rec);
-        showToast('Photo set as baseline');
+        if (ex?.zoom && ex.zoom < 0.95) showToast('Baseline set. Photo used the ultra-wide lens; zoom left at 1×', 3200);
+        else if (ex?.zoom) showToast(`Baseline set. Zoom matched to the photo: ${ex.zoom}×`, 3200);
+        else {
+          showToast('Baseline set. No camera data in this photo: set the zoom', 3200);
+          setZoomOpen(true);
+        }
       } else showToast('Photo added');
     } catch (err) {
       showToast('Could not read that photo: ' + (err as Error).message);
@@ -299,6 +319,22 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
 
       {settings.developer && st && <DevHud st={st} log={logRef.current} angle={angleInfo} />}
 
+      {zoomOpen && imported && (
+        <div className="zoom-panel glass clear" onPointerDown={(e) => e.stopPropagation()}>
+          <div className="zoom-row">
+            <span>Zoom</span>
+            <strong>{(st?.zoom ?? 1).toFixed(1)}×</strong>
+            <button onClick={() => setZoomOpen(false)}>Done</button>
+          </div>
+          <input type="range" min={1} max={8} step={0.1} value={st?.zoom ?? 1} onChange={(e) => setImportedZoom(+e.target.value, 'manual')} aria-label="Zoom" />
+          <div className="zoom-note">
+            {photoExif?.zoom
+              ? <>Photo was taken at {describeSettings(photoExif)}{photoExif.zoom !== (st?.zoom ?? 1) && <button onClick={() => setImportedZoom(Math.max(1, Math.min(8, photoExif.zoom!)), 'photo')}>Use {photoExif.zoom}×</button>}</>
+              : 'This photo carries no camera data. Set the zoom you used when taking it.'}
+          </div>
+        </div>
+      )}
+
       <div className="cam-bottom">
         {baseline || lastThumb ? (
           <button className="cam-thumb" onClick={onHistory} aria-label="Photo history">
@@ -316,7 +352,7 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
           <span className="shutter-core" />
         </button>
         <button className={`cam-zoom glass clear interactive ${zoomLocked ? 'locked' : ''}`} onClick={cycleZoom} aria-label="Zoom">
-          {st?.zoom ?? 1}×
+          {Number((st?.zoom ?? 1).toFixed(1))}×
         </button>
       </div>
     </div>
