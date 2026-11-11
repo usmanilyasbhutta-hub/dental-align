@@ -401,3 +401,6 @@ input, select { font: inherit; color: inherit; }
 .cam-error { position: absolute; left: 24px; right: 24px; top: 34%; z-index: 3; padding: 20px; border-radius: 26px; text-align: center; }
 .cam-error p { margin: 0 0 16px; font-size: 16px; line-height: 22px; }
 .btn-retry { height: 46px; padding: 0 26px; border-radius: 23px; background: var(--bronze-light); color: #1c2220; font-size: 16px; font-weight: 700; }
+
+/* small previews cannot be saved by long-press (they are thumbnails, not the photo) */
+.photo img, .tile-img img, .cam-thumb img, .capture .ghost { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; pointer-events: none; }
