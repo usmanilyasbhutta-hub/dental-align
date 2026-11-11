@@ -79,6 +79,7 @@ export interface EngineState {
   workerReady: boolean;
   cameraReady: boolean;
   error: string | null;
+  cameraError: 'denied' | 'failed' | null;
   aspectMismatch: boolean; // baseline is landscape but phone is portrait, or the reverse
   zoom: number;
   ghostUrl: string | null; // reference fitted to the camera frame (uniform scale + crop only)
@@ -202,6 +203,7 @@ export class CaptureEngine {
       workerReady: false,
       cameraReady: false,
       error: null,
+      cameraError: null,
       aspectMismatch: false,
       zoom: 1,
       ghostUrl: null,
@@ -244,33 +246,54 @@ export class CaptureEngine {
     return this.settings.resolution === '4k' || this.zoom > 1;
   }
 
-  private async openStream(): Promise<boolean> {
+  private opening: Promise<boolean> | null = null;
+  /** One camera open at a time: iOS refuses overlapping or rapid repeat requests. */
+  private openStream(): Promise<boolean> {
+    if (!this.opening) this.opening = this.openStreamOnce().finally(() => (this.opening = null));
+    return this.opening;
+  }
+
+  private async openStreamOnce(): Promise<boolean> {
     const hi = this.wantHi();
     this.hiStream = hi;
-    // Ask for the largest stream the phone will give. "ideal" alone lets Safari settle for less,
-    // so exact sizes are tried first, largest to smallest.
-    const base = { facingMode: { ideal: 'environment' }, frameRate: { ideal: 30 } };
-    const tries: MediaTrackConstraints[] = [];
-    if (hi) {
-      tries.push({ ...base, width: { exact: 3840 }, height: { exact: 2160 } });
-      tries.push({ ...base, width: { exact: 2560 }, height: { exact: 1440 } });
-      tries.push({ ...base, width: { ideal: 3840 }, height: { ideal: 2160 } });
-    }
-    tries.push({ ...base, width: { ideal: 1920 }, height: { ideal: 1080 } });
-    let lastErr: Error | null = null;
+    this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
-    for (const video of tries) {
+    this.state.error = null;
+    // A single request with "ideal" sizes (iOS refuses a burst of exact requests), then the size is
+    // raised on the open track if Safari started smaller. A plain request is the last resort.
+    const base = { facingMode: { ideal: 'environment' }, frameRate: { ideal: 30 } };
+    const first: MediaTrackConstraints = hi ? { ...base, width: { ideal: 3840 }, height: { ideal: 2160 } } : { ...base, width: { ideal: 1920 }, height: { ideal: 1080 } };
+    let lastErr: Error | null = null;
+    for (const video of [first, { facingMode: { ideal: 'environment' } }] as MediaTrackConstraints[]) {
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video });
         break;
       } catch (e) {
         lastErr = e as Error;
-        if (lastErr.name === 'NotAllowedError') break;
+        this.onEvent({ type: 'camera-error', name: lastErr.name, message: lastErr.message, constraints: video });
+        await new Promise((r) => setTimeout(r, 300));
       }
     }
     if (!this.stream) {
-      this.fail('Camera unavailable: ' + (lastErr?.message ?? 'unknown') + '. Camera access needs HTTPS and permission.');
+      this.state.cameraError = lastErr?.name === 'NotAllowedError' ? 'denied' : 'failed';
+      this.fail(
+        lastErr?.name === 'NotAllowedError'
+          ? 'The camera could not start. Tap Try again. If it keeps failing, allow Camera for this site in iOS Settings, then reopen the app.'
+          : 'The camera could not start (' + (lastErr?.message ?? 'unknown error') + '). Tap Try again.',
+      );
       return false;
+    }
+    this.state.cameraError = null;
+    if (hi) {
+      const tr = this.stream.getVideoTracks()[0];
+      const st0 = tr.getSettings?.() ?? {};
+      if (Math.min(st0.width ?? 0, st0.height ?? 0) < 2000) {
+        try {
+          await tr.applyConstraints({ ...base, width: { ideal: 3840 }, height: { ideal: 2160 }, advanced: [{ width: 3840, height: 2160 }] });
+        } catch (e) {
+          this.onEvent({ type: 'camera-upsize-failed', message: (e as Error).message, settings: st0 });
+        }
+      }
     }
     this.track = this.stream.getVideoTracks()[0];
     // Hold the optical zoom at 1x (spec §21); our zoom is a centre crop that we control and record.
@@ -301,9 +324,29 @@ export class CaptureEngine {
     this.state.videoDims = this.cropRect();
     this.onEvent({ type: 'camera', settings: this.cameraInfo() });
     this.emit();
-    this.running = true;
-    this.schedule();
+    if (!this.running) {
+      this.running = true;
+      this.schedule();
+      document.addEventListener('visibilitychange', this.onVisible);
+    }
+    this.track?.addEventListener('ended', this.onEnded);
     void this.applyReference();
+  }
+
+  /** iOS stops the camera when the app is backgrounded or a call comes in: start it again. */
+  private onVisible = () => {
+    if (document.visibilityState === 'visible' && this.running && (!this.track || this.track.readyState === 'ended')) void this.startCamera();
+  };
+  private onEnded = () => {
+    this.onEvent({ type: 'camera-ended' });
+    if (document.visibilityState === 'visible' && this.running) setTimeout(() => void this.startCamera(), 400);
+  };
+
+  /** Called from a tap on "Try again" (a user gesture helps iOS grant the camera). */
+  retryCamera() {
+    this.state.error = null;
+    this.emit();
+    void this.startCamera();
   }
 
   /** Centre crop of the camera frame used as the working image. zoom 1 = the whole frame. */
@@ -323,8 +366,7 @@ export class CaptureEngine {
     this.onEvent({ type: 'zoom', zoom: z });
     this.state.smooth = null;
     this.prevRaw = null;
-    if (this.stream && this.wantHi() !== this.hiStream) {
-      this.stream.getTracks().forEach((t) => t.stop());
+    if (this.stream && this.wantHi() && !this.hiStream) {
       await this.openStream();
       this.onEvent({ type: 'camera', settings: this.cameraInfo() });
     }
@@ -351,6 +393,7 @@ export class CaptureEngine {
 
   stop() {
     this.running = false;
+    document.removeEventListener('visibilitychange', this.onVisible);
     const v = this.video as HTMLVideoElement & { cancelVideoFrameCallback?: (h: number) => void };
     if (this.rvfcHandle && v.cancelVideoFrameCallback) v.cancelVideoFrameCallback(this.rvfcHandle);
     if (this.rafHandle) cancelAnimationFrame(this.rafHandle);

@@ -310,7 +310,12 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
         </div>
       </div>
 
-      {st?.error && <div className="cam-notice err">{st.error}</div>}
+{st?.error && (
+        <div className="cam-error glass clear">
+          <p>{st.error}</p>
+          <button className="btn-retry" onClick={() => engineRef.current?.retryCamera()}>Try again</button>
+        </div>
+      )}
       {!st?.error && st && !st.workerReady && <div className="cam-notice glass clear">Preparing alignment…</div>}
       {st?.aspectMismatch && <div className="cam-notice glass clear">Turn the phone to match the baseline photo</div>}
       {st?.lightingHint && !settings.developer && <div className="lighthint">{st.lightingHint === 'darker' ? 'Lighting is dimmer than the baseline' : 'Lighting is brighter than the baseline'}</div>}

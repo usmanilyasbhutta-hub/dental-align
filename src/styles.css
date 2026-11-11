@@ -397,3 +397,7 @@ input, select { font: inherit; color: inherit; }
 .zoom-row button, .zoom-note button { color: var(--bronze-light); font-weight: 600; font-size: 15px; padding: 4px 0 4px 10px; }
 .zoom-panel input { width: 100%; margin: 10px 0 8px; accent-color: var(--bronze-light); }
 .zoom-note { font-size: 13px; line-height: 18px; color: rgba(255, 255, 255, 0.8); }
+
+.cam-error { position: absolute; left: 24px; right: 24px; top: 34%; z-index: 3; padding: 20px; border-radius: 26px; text-align: center; }
+.cam-error p { margin: 0 0 16px; font-size: 16px; line-height: 22px; }
+.btn-retry { height: 46px; padding: 0 26px; border-radius: 23px; background: var(--bronze-light); color: #1c2220; font-size: 16px; font-weight: 700; }
