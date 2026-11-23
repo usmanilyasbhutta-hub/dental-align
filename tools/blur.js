@@ -1,0 +1,22 @@
+const { chromium } = require('playwright');
+(async () => {
+  const b = await chromium.launch({ args: ['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream','--use-file-for-fake-video-capture=/home/claude/test/fake_blur.y4m'] });
+  const c = await b.newContext({ viewport:{width:390,height:844}, deviceScaleFactor:2, isMobile:true, hasTouch:true, permissions:['camera'] });
+  const p = await c.newPage(); const errs=[]; p.on('pageerror',e=>errs.push(String(e)));
+  await p.goto('http://localhost:4173/');
+  await p.fill('.searchfield input','BLUR-1'); await p.click('text=Add patient BLUR-1'); await p.click('.tile-add'); await p.click('.sheet >> text=Anterior');
+  await p.waitForSelector('.cam-zoom'); await p.waitForTimeout(1200);
+  await p.click('.cam-aspect'); await p.waitForTimeout(400);
+  console.log('aspect:', await p.locator('.cam-aspect').innerText(), '| size:', await p.locator('.cam-res').innerText());
+  await p.click('.shutter'); await p.waitForSelector('text=Baseline saved', { timeout: 8000 });
+  await p.screenshot({ path: 'b0_3x4.png' });
+  await p.waitForTimeout(3500);
+  console.log('coach while blurred:', await p.locator('.coach').innerText().catch(()=>'(none)'));
+  await p.screenshot({ path: 'b1_blurred.png' });
+  await p.click('.shutter'); await p.waitForSelector('.blur-prompt', { timeout: 8000 });
+  await p.screenshot({ path: 'b2_prompt.png' });
+  await p.click('text=Delete and retake'); await p.waitForTimeout(500);
+  const caps = await p.evaluate(async () => { const db = await new Promise(r => { const q = indexedDB.open('dental-align'); q.onsuccess = () => r(q.result); }); return await new Promise(r => { const t = db.transaction('captures').objectStore('captures').getAll(); t.onsuccess = () => r(t.result.filter(c=>c.patientId==='BLUR-1').map(c => ({ role:c.role, w:c.width, h:c.height, aspect:c.meta.aspect, blurred:c.meta.blurred, rel:c.meta.relSharp }))); }); });
+  console.log(JSON.stringify(caps));
+  console.log('errors', errs); await b.close();
+})();

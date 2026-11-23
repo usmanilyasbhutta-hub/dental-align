@@ -619,7 +619,13 @@ function SettingsScreen({ settings, onChange, onBack }: { settings: Settings; on
           <Segmented small items={[{ value: '1080', label: '1080p' }, { value: '4k', label: '4K' }]} value={settings.resolution} onChange={(r) => set('resolution', r as Settings['resolution'])} />
         </div>
       </div>
-      <p className="group-footer">4K gives the most detail. Choose 1080p only if guidance feels slow.</p>
+      <div className="group">
+        <div className="cell static">
+          <span className="cell-main"><span className="cell-title">Photo shape</span></span>
+          <Segmented small items={[{ value: '9:16', label: '9:16' }, { value: '3:4', label: '3:4' }]} value={settings.aspect} onChange={(a) => set('aspect', a as Settings['aspect'])} />
+        </div>
+      </div>
+      <p className="group-footer">For new views. 3:4 matches iPhone Camera photos. A view with a baseline always uses the baseline's shape. 4K gives the most detail. Choose 1080p only if guidance feels slow.</p>
 
       <div className="group-header">Diagnostics</div>
       <div className="group">
@@ -643,6 +649,7 @@ function SettingsScreen({ settings, onChange, onBack }: { settings: Settings; on
             {num('smoothing', 'Smoothing', 0.05)}
             {num('strongE', 'Aligned threshold', 0.005)}
             {num('sharpMin', 'Sharpness floor')}
+            {num('blurRel', 'Blur threshold vs baseline (0–1)', 0.05)}
             {num('motionMax', 'Steadiness limit (°/s)')}
             <Toggle label="Contrast normalisation" checked={settings.clahe} onChange={(v) => set('clahe', v)} />
             <Toggle label="Temporal tracking" checked={settings.tracking} onChange={(v) => set('tracking', v)} />

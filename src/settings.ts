@@ -19,7 +19,10 @@ export interface Settings {
   smoothing: number; // EMA factor 0..1 (higher = more responsive)
   strongE: number; // total error below which = strong convergence (fraction of image width)
   convergingE: number;
-  sharpMin: number; // absolute sharpness floor (Laplacian variance of centre crop)
+  sharpMin: number;
+  blurRel: number; // live sharpness below this fraction of the reference counts as blurred
+  blurAbs: number; // without a reference: absolute floor at processing size
+  aspect: '9:16' | '3:4'; // shape of new photos // absolute sharpness floor (Laplacian variance of centre crop)
   motionMax: number; // max rotation rate (deg/s) for "peak opportunity"
   flipYaw: boolean; // sign calibration for the perspective cue
   flipPitch: boolean;
@@ -58,6 +61,9 @@ export const DEFAULTS: Settings = {
   strongE: 0.035,
   convergingE: 0.12,
   sharpMin: 60,
+  blurRel: 0.3,
+  blurAbs: 120,
+  aspect: '9:16',
   motionMax: 25,
   flipYaw: false,
   flipPitch: false,

@@ -38,6 +38,12 @@ Later deployments: rebuild, re-drag `dist`. The service worker picks up the new 
 - **Follow-ups:** the baseline appears as a **fixed translucent ghost** (◐ cycles its opacity). Move the phone and patient until the live anatomy settles onto it.
 - Thumbnail (bottom-left) → history: unwarped baseline/follow-up comparison slider, **Save / Share** (iOS share sheet → *Save Image* puts it in Photos), metadata export, **Make baseline**, delete.
 
+### v0.7: focus and photo shape (after the 23 Nov clinical test)
+
+- **Blur gate.** Live sharpness is compared with the baseline at the same processing size. While blurred, the coach says so first ("Out of focus. Move back a little", or "Too close to focus. Move back, then zoom in" when the last sharp measurement showed the picture larger than the baseline), and the green "aligned" state, halo and chime are withheld.
+- **After capture,** a blurred photo is flagged with **Delete and retake** or **Keep**. Best-frame selection now rejects blurred frames even if they are better aligned.
+- **3:4 photo shape** (the iPhone Camera's shape) besides 9:16. A view with a baseline always uses the baseline's shape, so imported Camera photos are no longer cropped top and bottom. The area outside a 3:4 frame is dimmed on screen.
+
 ### v0.5: photo import, zoom, stronger guidance (after the first clinical test)
 
 - **Use any photo as the baseline.** On a new view tap **Use a photo** (camera screen), or the picture button in a view's history, then **Make baseline**. The file is stored untouched. For guidance it is fitted to the camera frame by uniform scale + centre crop only, never warped. Hold the phone the same way round as the photo (a landscape photo needs the phone in landscape).

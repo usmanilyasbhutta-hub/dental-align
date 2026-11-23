@@ -164,8 +164,10 @@ function setReference(msg) {
     cov4,
   };
   img.delete(); kpv.delete(); desc.delete(); none.delete(); orb.delete();
+  const refSharp = laplacianVariance(gray, w, h);
   postMessage({
     type: 'reference',
+    refSharp,
     w, h,
     detected: all.length,
     toothPoints: toothPicked,
@@ -252,6 +254,8 @@ function processFrame(msg) {
   const out = { type: 'result', id, w, h, hasRef: !!ref };
   // image quality — absolute, independent of the reference
   out.sharpness = laplacianVariance(crop, cropW, cropH);
+  // sharpness of the whole working image at processing size: comparable with the reference
+  out.procSharp = laplacianVariance(gray, w, h);
   const g = new Uint8Array(gray);
   out.brightness = brightnessStats(g);
 

@@ -44,7 +44,7 @@ export function imageCue(g: Registration | null, flipYaw: boolean, flipPitch: bo
 
 export interface Coach {
   text: string;
-  kind: 'angle' | 'distance' | 'move' | 'rotate' | 'steady' | 'ok' | 'search';
+  kind: 'angle' | 'distance' | 'move' | 'rotate' | 'steady' | 'ok' | 'search' | 'focus';
   /** unit screen direction for move / angle cues */
   dx?: number;
   dy?: number;
@@ -63,14 +63,22 @@ export function coach(opts: {
   motionMax: number;
   sharpOk: boolean;
   aligned: boolean;
+  blurred?: boolean;
+  tooClose?: boolean;
 }): Coach | null {
-  const { hasRef, reg, angle, angleTolDeg, motionRate, motionMax, sharpOk, aligned } = opts;
+  const { hasRef, reg, angle, angleTolDeg, motionRate, motionMax, sharpOk, aligned, blurred, tooClose } = opts;
   const angCue = (a: AngleCue, suffix: string): Coach => {
     const horiz = Math.abs(a.x) > Math.abs(a.y);
     const text = horiz ? (a.x < 0 ? 'Aim left' : 'Aim right') : a.y < 0 ? 'Aim higher' : 'Aim lower';
     const n = Math.hypot(a.x, a.y) || 1;
     return { text: text + suffix, kind: 'angle', dx: a.x / n, dy: a.y / n };
   };
+  // Focus comes first: a blurred photo is unusable however well it is aligned, and blur also breaks matching.
+  if (blurred) {
+    if (motionRate > motionMax) return { text: 'Blurred. Hold still', kind: 'focus' };
+    if (tooClose) return { text: 'Too close to focus. Move back, then zoom in', kind: 'focus', sign: -1 };
+    return { text: 'Out of focus. Move back a little', kind: 'focus', sign: -1 };
+  }
   if (!hasRef) {
     if (motionRate > motionMax) return { text: 'Hold steady', kind: 'steady' };
     return null;

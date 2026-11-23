@@ -69,6 +69,14 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
   const photoExif = (baseline?.meta as { exif?: PhotoSettings | null } | undefined)?.exif ?? null;
   // a baseline taken in the app fixes the zoom; for an imported photo it stays adjustable
   const zoomLocked = baseZoom != null && !imported;
+  // photo shape: follow the baseline (iPhone Camera photos are 3:4); new views use the setting
+  const baseAspect: '9:16' | '3:4' | null = baseline
+    ? ((baseline.meta as { aspect?: '9:16' | '3:4' } | undefined)?.aspect ??
+      (Math.abs(Math.max(baseline.width, baseline.height) / Math.min(baseline.width, baseline.height) - 4 / 3) < 0.08 ? '3:4' : '9:16'))
+    : null;
+  const aspect = baseAspect ?? settings.aspect;
+  const [blurPrompt, setBlurPrompt] = useState<{ rec: CaptureRec; wasBaseline: boolean } | null>(null);
+  const [cropBox, setCropBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [zoomOpen, setZoomOpen] = useState(false);
 
   useEffect(() => {
@@ -82,6 +90,10 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseline, loaded]);
 
+  useEffect(() => {
+    engineRef.current?.setAspect(aspect);
+  }, [aspect]);
+
   // ---- engine lifecycle
   useEffect(() => {
     if (!loaded) return;
@@ -89,6 +101,8 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
     const eng = new CaptureEngine(video, settingsRef.current);
     engineRef.current = eng;
     eng.zoom = baseZoom ?? settingsRef.current.zoom ?? 1;
+    eng.aspect = aspect;
+    eng.state.aspect = aspect;
     eng.state.zoom = eng.zoom;
     eng.baseGravity = baseGravityRef.current;
     eng.requestReference(baseline?.master ?? null);
@@ -136,7 +150,8 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
         }
         const aligned = S.hasRef && (S.phase === 'strong' || S.phase === 'peak');
         const closeness = S.hasRef && S.smooth ? 1 - Math.min(1, S.smooth.E / cfg.convergingE) : null;
-        renderer.draw({ canvas: canvasRef.current, state: S, settings: cfg, viewKey, phoneRoll: motion.phoneRoll(), angle, coach: coachRef.current });
+        const crop = eng.cropOnScreen(canvasRef.current.clientWidth, canvasRef.current.clientHeight);
+        renderer.draw({ canvas: canvasRef.current, state: S, settings: cfg, viewKey, phoneRoll: motion.phoneRoll(), angle, coach: coachRef.current, crop });
         sound.enabled = cfg.sound;
         sound.update(closeness, aligned);
         shutterRef.current?.style.setProperty('--p', String(aligned ? 1 : closeness ?? 0));
@@ -144,8 +159,9 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
         if (now - lastCoach > 200) {
           lastCoach = now;
           setAngleInfo(angle);
+          if (crop) setCropBox((b) => (b && Math.abs(b.left - crop.left) < 1 && Math.abs(b.top - crop.top) < 1 && Math.abs(b.width - crop.width) < 1 ? b : crop));
           coachRef.current = cfg.coach
-            ? coach({ hasRef: S.hasRef, reg: S.smooth, angle, angleTolDeg: cfg.angleTolDeg, motionRate: S.motionRate, motionMax: cfg.motionMax, sharpOk: S.sharpOk, aligned })
+            ? coach({ hasRef: S.hasRef, reg: S.smooth, angle, angleTolDeg: cfg.angleTolDeg, motionRate: S.motionRate, motionMax: cfg.motionMax, sharpOk: S.sharpOk, aligned, blurred: S.blurred, tooClose: S.tooClose })
             : null;
           setCoachMsg(coachRef.current);
         }
@@ -203,7 +219,13 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
       await db.putView({ key: `${patientId}|${viewKey}`, patientId, viewKey, baselineId: v?.baselineId ?? rec.id, createdAt: v?.createdAt ?? Date.now() });
       await db.touchPatient(patientId);
       setLastThumb(URL.createObjectURL(out.thumb));
-      if (isBaseline) {
+      rec.meta.aspect = engineRef.current?.aspect ?? aspect;
+      await db.putCapture(rec);
+      if ((out.meta as { blurred?: boolean | null }).blurred) {
+        // saved, but say so plainly and offer the retake straight away
+        if (isBaseline) setBaseline(rec);
+        setBlurPrompt({ rec, wasBaseline: isBaseline });
+      } else if (isBaseline) {
         // The first satisfactory photograph automatically becomes the baseline (spec §6).
         setBaseline(rec);
         showToast('Baseline saved');
@@ -278,6 +300,7 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
     }
   };
   const ghostUrl = st?.ghostUrl ?? null;
+  const ghostBox = cropBox ? { left: cropBox.left, top: cropBox.top, width: cropBox.width, height: cropBox.height, objectFit: 'fill' as const } : {};
 
   const phase = st?.phase ?? 'searching';
   const aligned = !!baseline && (phase === 'peak' || phase === 'strong');
@@ -286,8 +309,8 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
   return (
     <div className="capture" onPointerDown={() => sound.unlock()}>
       <video ref={videoRef} className="cam" playsInline muted autoPlay />
-      {ghostUrl && <img src={ghostUrl} className="ghost" style={{ opacity: ghostMode === 'photo' ? 0.42 : ghostMode === 'both' ? 0.3 : 0 }} alt="" draggable={false} />}
-      {st?.outlineUrl && <img src={st.outlineUrl} className="ghost outline" style={{ opacity: ghostMode === 'outline' || ghostMode === 'both' ? 0.95 : 0 }} alt="" draggable={false} />}
+      {ghostUrl && <img src={ghostUrl} className="ghost" style={{ ...ghostBox, opacity: ghostMode === 'photo' ? 0.42 : ghostMode === 'both' ? 0.3 : 0 }} alt="" draggable={false} />}
+      {st?.outlineUrl && <img src={st.outlineUrl} className="ghost outline" style={{ ...ghostBox, opacity: ghostMode === 'outline' || ghostMode === 'both' ? 0.95 : 0 }} alt="" draggable={false} />}
       <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPick} />
       <canvas ref={canvasRef} className="overlay" />
       {flash && <div className="flash" />}
@@ -320,7 +343,34 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
       {st?.aspectMismatch && <div className="cam-notice glass clear">Turn the phone to match the baseline photo</div>}
       {st?.lightingHint && !settings.developer && <div className="lighthint">{st.lightingHint === 'darker' ? 'Lighting is dimmer than the baseline' : 'Lighting is brighter than the baseline'}</div>}
       {toast && <div className="cam-toast glass clear">{toast}</div>}
-      {coachMsg && !toast && <div className={`coach glass clear ${coachMsg.kind}`}>{coachMsg.text}</div>}
+      {coachMsg && !toast && !blurPrompt && <div className={`coach glass clear ${coachMsg.kind}`}>{coachMsg.text}</div>}
+
+      {blurPrompt && (
+        <div className="blur-prompt glass clear" onPointerDown={(e) => e.stopPropagation()}>
+          <p><strong>This photo is blurred.</strong> {blurPrompt.wasBaseline ? 'A blurred baseline makes every follow-up harder.' : 'It will not show the detail you need.'}</p>
+          <div className="blur-actions">
+            <button
+              className="btn-retry"
+              onClick={async () => {
+                const { rec, wasBaseline } = blurPrompt;
+                await db.deleteCapture(rec.id);
+                if (wasBaseline) {
+                  const v = await db.getView(patientId, viewKey);
+                  if (v) await db.putView({ ...v, baselineId: null });
+                  setBaseline(null);
+                }
+                const caps = await db.listCaptures(patientId, viewKey);
+                setLastThumb(caps.length ? URL.createObjectURL(caps[caps.length - 1].thumb) : null);
+                setBlurPrompt(null);
+                showToast('Deleted. Take it again');
+              }}
+            >
+              Delete and retake
+            </button>
+            <button className="btn-keep" onClick={() => { showToast(blurPrompt.wasBaseline ? 'Baseline saved' : 'Follow-up saved'); setBlurPrompt(null); }}>Keep</button>
+          </div>
+        </div>
+      )}
 
       {settings.developer && st && <DevHud st={st} log={logRef.current} angle={angleInfo} />}
 
@@ -357,6 +407,18 @@ export default function Capture({ patientId, viewKey, settings, onSettings, onCl
           <span className="shutter-core" />
         </button>
         <div className="cam-right">
+          <button
+            className={`cam-aspect ${baseAspect ? 'locked' : ''}`}
+            onClick={() => {
+              if (baseAspect) return showToast(`Photo shape follows the baseline (${baseAspect})`);
+              const n = aspect === '9:16' ? '3:4' : '9:16';
+              onSettings({ ...settings, aspect: n });
+              showToast(n === '3:4' ? '3:4, like the iPhone Camera' : '9:16, full screen');
+            }}
+            aria-label="Photo shape"
+          >
+            {aspect}
+          </button>
           {st?.videoDims && (
             <span className={`cam-res ${Math.min(st.videoDims.w, st.videoDims.h) < 700 ? 'low' : ''}`}>
               {st.videoDims.w} × {st.videoDims.h}

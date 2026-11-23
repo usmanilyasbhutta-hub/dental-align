@@ -22,6 +22,8 @@ export interface OverlayCtx {
   phoneRoll: number | null;
   angle: AngleCue | null;
   coach: Coach | null;
+  /** where the working image sits on screen (it can be smaller than the screen in 3:4) */
+  crop: { left: number; top: number; width: number; height: number; k: number } | null;
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -64,19 +66,28 @@ export class OverlayRenderer {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
     if (!st.cameraReady || !st.videoDims) return;
+    const C = o.crop ?? { left: 0, top: 0, width: W, height: H, k: 1 };
+    // dim what lies outside the photo frame (3:4 shows less than the screen)
+    if (C.top > 1 || C.left > 1) {
+      ctx.fillStyle = 'rgba(0,0,0,0.62)';
+      ctx.fillRect(0, 0, W, Math.max(0, C.top));
+      ctx.fillRect(0, C.top + C.height, W, H - C.top - C.height);
+      ctx.fillRect(0, C.top, Math.max(0, C.left), C.height);
+      ctx.fillRect(C.left + C.width, C.top, W - C.left - C.width, C.height);
+    }
 
     if (!st.hasRef) {
       drawGenericGuide(ctx, o.viewKey, W, H, o.phoneRoll);
+      this.drawBigCue(ctx, o, W, H, C.width);
       return;
     }
-    const vd = st.videoDims, pd = st.procDims, rd = st.refDims;
-    if (!pd || !rd) return;
-    const vmap = coverMap(vd.w, vd.h, W, H);
-    const rmap = coverMap(rd.w, rd.h, W, H);
-    // processing px → screen
-    const liveToScreen = (x: number, y: number) => vmap.map((x * vd.w) / pd.w, (y * vd.h) / pd.h);
-    const refProcW = pd.w, refProcH = pd.h; // reference is processed at the same size when aspect matches
-    const refToScreen = (x: number, y: number) => rmap.map((x * rd.w) / refProcW, (y * rd.h) / refProcH);
+    const vd = st.videoDims, pd = st.procDims;
+    if (!pd) return;
+    // processing px → screen. The reference is fitted to the same working image, so it maps the same way.
+    const kx = C.width / pd.w, ky = C.height / pd.h;
+    const liveToScreen = (x: number, y: number): [number, number] => [C.left + x * kx, C.top + y * ky];
+    const refToScreen = liveToScreen;
+    const vmap = { k: C.width / vd.w };
 
     const g = st.smooth;
     const E = g?.E ?? 1;
@@ -288,7 +299,7 @@ export class OverlayRenderer {
   /** One large, unmistakable glyph for the correction the coach is asking for. */
   private drawBigCue(ctx: CanvasRenderingContext2D, o: OverlayCtx, W: number, H: number, pxPerNorm: number) {
     const c = o.coach;
-    if (!c || !o.state.hasRef) return;
+    if (!c || (!o.state.hasRef && c.kind !== 'focus')) return;
     const cx = W / 2, cy = H / 2, S = Math.min(W, H);
     const t = (performance.now() - this.t0) / 1000;
     const bob = 0.5 + 0.5 * Math.sin(t * 5);
@@ -322,7 +333,7 @@ export class OverlayRenderer {
     } else if (c.kind === 'angle' && c.dx != null && c.dy != null) {
       const off = S * 0.2 + 8 * bob, len = S * 0.14;
       arrow(cx + c.dx * off, cy + c.dy * off, cx + c.dx * (off + len), cy + c.dy * (off + len), 20, '255,200,120');
-    } else if (c.kind === 'distance' && c.sign) {
+    } else if ((c.kind === 'distance' || c.kind === 'focus') && c.sign) {
       // closer: arrows burst outward (make it bigger); back: arrows point inward
       const r0 = S * 0.27, r1 = S * 0.38, k = 6 * bob;
       for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {

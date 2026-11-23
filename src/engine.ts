@@ -47,6 +47,7 @@ export interface FrameResult {
   ok?: boolean;
   error?: string;
   sharpness: number;
+  procSharp?: number;
   brightness: { mean: number; clipped: number; crushed: number };
   liveFeatures?: number;
   matchMode?: 'none' | 'guided' | 'global';
@@ -89,6 +90,12 @@ export interface EngineState {
   smooth: Registration | null; // smoothed estimate used for guidance
   raw: Registration | null;
   sharpOk: boolean;
+  /** live sharpness relative to the reference (1 = as sharp), smoothed; null without a reference */
+  relSharp: number | null;
+  refSharp: number | null;
+  blurred: boolean;
+  tooClose: boolean;
+  aspect: '9:16' | '3:4';
   motionRate: number;
   fps: number;
   procMs: number;
@@ -213,6 +220,11 @@ export class CaptureEngine {
       smooth: null,
       raw: null,
       sharpOk: false,
+      relSharp: null,
+      refSharp: null,
+      blurred: false,
+      tooClose: false,
+      aspect: '9:16',
       motionRate: 0,
       fps: 0,
       procMs: 0,
@@ -352,8 +364,35 @@ export class CaptureEngine {
   /** Centre crop of the camera frame used as the working image. zoom 1 = the whole frame. */
   cropRect() {
     const vw = this.video.videoWidth, vh = this.video.videoHeight;
-    const w = Math.round(vw / this.zoom / 2) * 2, h = Math.round(vh / this.zoom / 2) * 2;
+    let w = vw / this.zoom, h = vh / this.zoom;
+    if (this.aspect === '3:4') {
+      // 3:4 (portrait) or 4:3 (landscape), the shape of iPhone Camera photos
+      if (h >= w) h = Math.min(h, (w * 4) / 3);
+      else w = Math.min(w, (h * 4) / 3);
+    }
+    w = Math.round(w / 2) * 2;
+    h = Math.round(h / 2) * 2;
     return { x: Math.round((vw - w) / 2), y: Math.round((vh - h) / 2), w, h };
+  }
+
+  aspect: '9:16' | '3:4' = '9:16';
+  setAspect(a: '9:16' | '3:4') {
+    if (a === this.aspect) return;
+    this.aspect = a;
+    this.state.aspect = a;
+    this.state.smooth = null;
+    this.prevRaw = null;
+    this.onEvent({ type: 'aspect', aspect: a });
+    this.emit();
+  }
+
+  /** Where the working image (crop) appears on a W×H screen showing the video cover-fitted and zoomed. */
+  cropOnScreen(W: number, H: number) {
+    const vw = this.video.videoWidth, vh = this.video.videoHeight;
+    if (!vw) return null;
+    const cr = this.cropRect();
+    const k = Math.max(W / vw, H / vh) * this.zoom;
+    return { left: W / 2 + (cr.x - vw / 2) * k, top: H / 2 + (cr.y - vh / 2) * k, width: cr.w * k, height: cr.h * k, k };
   }
 
   /** Digital zoom (centre crop). Switches to the 4K stream when zoomed so the crop stays sharp. */
@@ -535,7 +574,7 @@ export class CaptureEngine {
     if (!blob) {
       if (st.ghostUrl) URL.revokeObjectURL(st.ghostUrl);
       if (st.outlineUrl) URL.revokeObjectURL(st.outlineUrl);
-      Object.assign(st, { hasRef: false, refPoints: [], refDims: null, ghostUrl: null, outlineUrl: null, aspectMismatch: false });
+      Object.assign(st, { refSharp: null, relSharp: null, hasRef: false, refPoints: [], refDims: null, ghostUrl: null, outlineUrl: null, aspectMismatch: false });
       if (st.workerReady) this.worker.postMessage({ type: 'clearReference' });
       this.emit();
       return;
@@ -597,6 +636,8 @@ export class CaptureEngine {
       this.state.hasRef = true;
       this.state.refPoints = m.points as RefPoint[];
       this.state.toothPoints = (m.toothPoints as number) ?? 0;
+      this.state.refSharp = (m.refSharp as number) ?? null;
+      this.state.relSharp = null;
       this.prevRaw = null;
       this.state.smooth = null;
       this.strongLatched = false;
@@ -632,7 +673,23 @@ export class CaptureEngine {
     st.fps = this.fpsEma;
     st.procMs = r.ms;
     st.motionRate = m.rate;
-    st.sharpOk = r.sharpness >= s.sharpMin;
+    // ---- focus / blur (added after the 23 Nov test: a 20–40x blurred photo was saved)
+    // Compared with the reference at the same processing size, so photo resolution does not matter.
+    if (st.refSharp && r.procSharp != null) {
+      const rel = r.procSharp / st.refSharp;
+      st.relSharp = st.relSharp == null ? rel : st.relSharp * 0.6 + rel * 0.4;
+      st.blurred = st.relSharp < s.blurRel;
+    } else {
+      st.relSharp = null;
+      st.blurred = r.procSharp != null && r.procSharp < s.blurAbs;
+    }
+    st.sharpOk = r.sharpness >= s.sharpMin && !st.blurred;
+    // picture bigger than the baseline and soft: the phone is closer than the lens can focus
+    // (judged from the last distance measured while the picture was still sharp; blur stops the matching)
+    const rawNow = r.hasRef ? regFrom(r) : null;
+    if (rawNow && !st.blurred) this.lastSharpScale = { scale: rawNow.scale, t: performance.now() };
+    const ls = this.lastSharpScale && performance.now() - this.lastSharpScale.t < 4000 ? this.lastSharpScale.scale : null;
+    st.tooClose = st.blurred && st.hasRef && ls != null && ls > 1.04;
 
     const raw = r.hasRef ? regFrom(r) : null;
     st.raw = raw;
@@ -694,12 +751,12 @@ export class CaptureEngine {
     else if (st.smooth.E < s.strongE) phase = st.sharpOk && m.rate < s.motionMax ? 'peak' : 'strong';
     else if (st.smooth.E < s.convergingE) phase = 'converging';
     else phase = 'converging';
-    if (r.hasRef && angleBlocks && (phase === 'strong' || phase === 'peak')) phase = 'converging';
+    if (r.hasRef && (angleBlocks || st.blurred) && (phase === 'strong' || phase === 'peak')) phase = 'converging';
     st.phase = phase;
 
     // haptics with hysteresis (spec §18D)
     if (r.hasRef && st.smooth) {
-      if (!this.strongLatched && st.smooth.E < s.strongE && !angleBlocks) {
+      if (!this.strongLatched && st.smooth.E < s.strongE && !angleBlocks && !st.blurred) {
         this.strongLatched = true;
         if (s.haptics) haptic('tick');
         this.onEvent({ type: 'strong-convergence', E: st.smooth.E });
@@ -752,6 +809,10 @@ export class CaptureEngine {
       simRms: r.simRms ?? null,
       homRms: r.homRms ?? null,
       sharpness: r.sharpness,
+      procSharp: r.procSharp ?? null,
+      relSharp: st.relSharp,
+      blurred: st.blurred,
+      tooClose: st.tooClose,
       lumMean: r.brightness?.mean,
       clipped: r.brightness?.clipped,
       lumRatio: r.lumRatio ?? null,
@@ -797,6 +858,7 @@ export class CaptureEngine {
   }
 
   autoCaptureCb: (() => void) | null = null;
+  private lastSharpScale: { scale: number; t: number } | null = null;
   /** baseline gravity (device frame) if the baseline stored it; used for logging the angle error */
   baseGravity: { x: number; y: number; z: number } | null = null;
 
@@ -832,14 +894,17 @@ export class CaptureEngine {
 
   private score(e: RingEntry, maxSharp: number): number {
     const r = e.result!;
-    const sharpNorm = maxSharp > 0 ? r.sharpness / maxSharp : 0;
+    const sh = r.procSharp ?? r.sharpness;
+    const sharpNorm = maxSharp > 0 ? sh / maxSharp : 0;
     const motionPen = Math.min(1, e.motion / 120);
     const exposurePen = (r.brightness?.clipped ?? 0) * 2 + (r.brightness?.crushed ?? 0);
+    // a blurred frame loses to any sharp one, however well it is aligned
+    const rel = this.state.refSharp && r.procSharp != null ? r.procSharp / this.state.refSharp : null;
+    const blurPen = rel != null && rel < this.settings.blurRel ? 1 : 0;
     if (r.hasRef) {
       const reg = regFrom(r);
       const geo = reg ? reg.E : 1;
-      // geometry dominates; sharpness/motion/exposure break ties among near-equal geometry
-      return geo + (1 - sharpNorm) * 0.02 + motionPen * 0.015 + exposurePen * 0.05;
+      return geo + (1 - sharpNorm) * 0.08 + motionPen * 0.02 + exposurePen * 0.05 + blurPen;
     }
     return (1 - sharpNorm) + motionPen * 0.5 + exposurePen;
   }
@@ -856,7 +921,7 @@ export class CaptureEngine {
       let chosen: RingEntry | null = null;
       const scored: Record<string, unknown>[] = [];
       if (cands.length && cands[0].result) {
-        const maxSharp = Math.max(...cands.map((c) => c.result?.sharpness ?? 0));
+        const maxSharp = Math.max(...cands.map((c) => c.result?.procSharp ?? c.result?.sharpness ?? 0));
         let best = Infinity;
         for (const c of cands) {
           if (!c.result) continue;
@@ -914,6 +979,10 @@ export class CaptureEngine {
           ? { tx: reg.tx, ty: reg.ty, scale: reg.scale, rollDeg: (reg.roll * 180) / Math.PI, px: reg.px, py: reg.py, E: reg.E, inliers: r?.inliers, candidates: r?.candidates, inlierRatio: r?.inlierRatio, coverage: r?.coverage }
           : null,
         sharpness: r?.sharpness ?? null,
+        procSharp: r?.procSharp ?? null,
+        relSharp: this.state.refSharp && r?.procSharp != null ? r.procSharp / this.state.refSharp : null,
+        blurred: this.state.refSharp && r?.procSharp != null ? r.procSharp / this.state.refSharp < this.settings.blurRel : r?.procSharp != null ? r.procSharp < this.settings.blurAbs : null,
+        aspect: this.aspect,
         brightness: r?.brightness ?? null,
         motion: { rate: chosen?.motion ?? null, last: this.motionAcc },
         // phone attitude at capture: lets follow-ups reproduce angulation from the gravity sensor
